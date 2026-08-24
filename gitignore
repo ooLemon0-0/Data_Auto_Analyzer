@@ -1,0 +1,106 @@
+# ============================================================
+# Local configuration / secrets
+# ============================================================
+config/config.json
+.env
+.env.*
+!.env.example
+
+# Private credentials / certificates
+*.key
+*.pem
+*.p12
+*.pfx
+
+# ============================================================
+# Runtime state - NEVER commit
+# ============================================================
+runtime/
+
+# Defensive ignores in case runtime paths are changed later
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Browser profiles / browser automation state
+**/browser-profile/
+**/chrome-profile/
+**/playwright_storage_state.json
+
+# ============================================================
+# Python
+# ============================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+.venv/
+venv/
+env/
+ENV/
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyright/
+.coverage
+.coverage.*
+htmlcov/
+
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# ============================================================
+# Logs / temporary files
+# ============================================================
+*.log
+*.tmp
+*.temp
+*.part
+*.bak
+*.swp
+*.swo
+~$*
+
+# ============================================================
+# Playwright / browser test artifacts
+# ============================================================
+playwright-report/
+test-results/
+blob-report/
+
+# ============================================================
+# Downloaded / packaged artifacts
+# ============================================================
+*.zip
+*.rar
+*.7z
+*.tar
+*.tar.gz
+*.tgz
+
+# ============================================================
+# IDE
+# ============================================================
+.vscode/
+.idea/
+*.code-workspace
+
+# ============================================================
+# OS
+# ============================================================
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ============================================================
+# Keep templates / project sources
+# ============================================================
+!config/config.example.json
+!app/static/*.html

@@ -1,0 +1,159 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8100
+  },
+  "storage": {
+    "db_path": "./runtime/review.sqlite3",
+    "data_root": "./runtime/data"
+  },
+  "projects": [
+    {
+      "id": "binxin_billet",
+      "name": "镔鑫钢铁铸坯号识别",
+      "enabled": true,
+      "daily_target": 50,
+      "source": {
+        "type": "binxin_history",
+        "refresh_on_prepare": false,
+        "easyconnect": {
+          "enabled": true,
+          "auto_detect": true,
+          "launch_command": [],
+          "healthcheck_url": "http://172.30.31.73:3000/",
+          "connect_timeout_seconds": 90
+        },
+        "history_url": "http://172.30.31.73:3000/#/history",
+        "browser": {
+          "channel": "chrome",
+          "headless": false,
+          "user_data_dir": "./runtime/browser/binxin",
+          "download_dir": "./runtime/downloads/binxin",
+          "ignore_no_sandbox_arg": true
+        },
+        "selectors": {
+          "start_date": "input.el-range-input[placeholder=\"开始时间\"]",
+          "end_date": "input.el-range-input[placeholder=\"结束时间\"]",
+          "search_button": "",
+          "export_button": "button:has-text(\"数据导出\")",
+          "table_rows": ".table-wrapper .el-table__body tbody tr.el-table__row"
+        },
+        "pagination": {
+          "next_button": ".el-pagination button.btn-next",
+          "active_page": ".el-pagination .el-pager li.is-active.number",
+          "max_pages": 200
+        },
+        "export": {
+          "archive_data_export": true,
+          "archive_required": false,
+          "filter_timeout_ms": 30000,
+          "download_timeout_ms": 60000,
+          "wait_after_filter_ms": 1500
+        },
+        "auth": {
+          "username": "",
+          "password": "",
+          "username_env": "BINXIN_USERNAME",
+          "password_env": "BINXIN_PASSWORD",
+          "login_timeout_ms": 30000,
+          "selectors": {
+            "username": "input[placeholder=\"请输入用户名\"]",
+            "password": "input[placeholder=\"请输入密码\"]",
+            "login_button": "button:has-text(\"登录\")"
+          },
+          "page_settle_timeout_ms": 10000
+        }
+      },
+      "cache": {
+        "type": "sqlite",
+        "path": "./runtime/review.sqlite3",
+        "result_export_dir": "./runtime/results/binxin"
+      },
+      "sink": {
+        "type": "qingtui_document",
+        "enabled": true,
+
+        "document_url": "https://web.qingtui.com/drive/preview/1541208802663981056",
+
+        "append_strategy": "spreadsheet_keyboard",
+
+        "format": {
+          "columns": [
+            {
+              "field": "date",
+              "header": "日期"
+            },
+            {
+              "field": "sample_count",
+              "header": "抽样数量"
+            },
+            {
+              "field": "correct",
+              "header": "正确数量"
+            },
+            {
+              "field": "incorrect",
+              "header": "错误数量"
+            },
+            {
+              "field": "invalid",
+              "header": "无效数量"
+            },
+            {
+              "field": "accuracy",
+              "header": "准确率"
+            }
+          ],
+
+          "date_field": "date",
+          "date_output_format": "%Y-%m-%d",
+          "accuracy_suffix": "%"
+        },
+
+        "browser": {
+          "channel": "chrome",
+          "headless": false,
+
+          "user_data_dir": "./runtime/browser/qingtui",
+
+          "remote_debugging_port": 9223,
+          "browser_start_timeout_seconds": 20,
+
+          "allow_interactive_login": true,
+          "interactive_login_timeout_seconds": 300,
+          "post_login_settle_ms": 2500,
+
+          "ignore_no_sandbox_arg": true,
+
+          "login_markers": [
+            "input[type=\"password\"]",
+            "text=\"登录\"",
+            "text=扫码登录",
+            "text=扫码登录后查看",
+            "text=手机验证",
+            "text=轻推登录"
+          ]
+        },
+
+        "selectors": {
+          "sheet_name": "Sheet1",
+
+          "edit_button_texts": [
+            "在线编辑",
+            "编辑"
+          ],
+
+          "editor_ready_wait_ms": 2500,
+          "editor_surface_timeout_ms": 30000,
+          "grid_focus_timeout_ms": 30000,
+
+          "wait_after_edit_ms": 3000,
+          "post_auth_wait_ms": 1800,
+
+          "paste_wait_ms": 800,
+          "save_wait_ms": 2500
+        }
+      }
+    }
+  ]
+}

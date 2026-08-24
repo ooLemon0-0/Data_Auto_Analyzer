@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>数据抽样审核</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <div class="eyebrow">DATA REVIEW</div>
+        <h1>数据抽样审核</h1>
+      </div>
+      <div class="controls">
+        <label>项目<select id="projectSelect"></select></label>
+        <label>日期<input id="dateInput" type="date" /></label>
+        <label>有效样本数<input id="targetInput" type="number" min="1" value="50" /></label>
+        <button id="prepareBtn" class="primary">拉取并开始</button>
+      </div>
+    </header>
+
+    <section class="stats" id="stats">
+      <div class="stat"><span>进度</span><strong id="progressStat">0 / 50</strong></div>
+      <div class="stat"><span>正确</span><strong id="correctStat">0</strong></div>
+      <div class="stat"><span>错误</span><strong id="incorrectStat">0</strong></div>
+      <div class="stat"><span>无效</span><strong id="invalidStat">0</strong></div>
+      <div class="stat"><span>准确率</span><strong id="accuracyStat">—</strong></div>
+      <button id="sinkAuthBtn" class="ghost">轻推登录 / 验证</button>
+      <button id="uploadBtn" class="ghost" disabled>审核完成并上传</button>
+    </section>
+
+    <section class="review-card">
+      <div class="image-pane">
+        <div class="image-head">
+          <span id="itemCounter">尚未开始</span>
+          <div class="image-actions">
+            <button id="rotateBtn" class="rotate-btn" type="button" disabled><kbd>R</kbd> 旋转 90°</button>
+            <span id="decisionBadge" class="badge">未审核</span>
+          </div>
+        </div>
+        <div class="image-stage">
+          <img id="reviewImage" alt="待审核原图" />
+          <div id="emptyState" class="empty">选择项目和日期后点击“拉取并开始”</div>
+        </div>
+      </div>
+
+      <aside class="result-pane">
+        <div class="result-label">识别结果</div>
+        <div id="recognitionText" class="recognition">—</div>
+        <div class="meta" id="sourceKey">source: —</div>
+
+        <div class="decision-grid">
+          <button class="decision correct" data-decision="correct"><kbd>1</kbd> 正确</button>
+          <button class="decision incorrect" data-decision="incorrect"><kbd>2</kbd> 错误</button>
+          <button class="decision invalid" data-decision="invalid"><kbd>3</kbd> 无效 · 自动补抽</button>
+        </div>
+
+        <div class="navigation">
+          <button id="prevBtn"><kbd>←</kbd> 上一条</button>
+          <button id="nextBtn">下一条 <kbd>→</kbd></button>
+        </div>
+        <p class="hint">快捷键：1 正确 · 2 错误 · 3 无效 · R 旋转图片 · ← 上一条 · → 下一条</p>
+      </aside>
+    </section>
+
+    <div id="toast" class="toast"></div>
+  </main>
+<script src="/static/app.js"></script>
+</body>
+</html>
