@@ -1618,3 +1618,52 @@ Excel
 > **新增项目优先增加插件和配置，不修改核心。**
 
 如果下一次 AI 只有这份 README 和一个新的网页 HTML，它应当先从 HTML 识别登录、日期、表格、分页和图片结构，然后按照第 16～18 节新增 DataSource，并复用现有审核系统，而不是重新设计整个项目。
+
+---
+
+# 24. 现场日志诊断
+
+审核页新增“日志诊断”按钮。它按当前条目的项目、采集时间、识别结果、图片名和机位，在现场日志时间窗口中匹配 OCR 事件；诊断仅临时展示，不写入审核数据库，也不会改变 `correct / incorrect / invalid`。
+
+通用能力位于 `app/diagnostics/`，项目日志协议位于 `app/projects/<project>/diagnostics/`。新增项目只需实现并注册新的 `LogParser`，再增加项目 `diagnostics` 配置，无需修改诊断 service。
+
+## 24.1 镔鑫 SSH 密码
+
+真实 `config/config.json` 不提交 Git，可以直接为每个项目和机位配置 SSH 密码：
+
+```json
+"auth": {
+  "type": "password",
+  "password": "该机位的 SSH 密码"
+}
+```
+
+日志诊断 SSH 凭据只从对应机位的 `auth.password` 读取。`config.example.json` 中必须保持密码为空。`diagnostics.stations` 支持为 72、73、74 等机位分别配置主机、账号、密码、日志路径和时间窗口。
+
+## 24.2 启动与页面测试
+
+安装新增依赖并准备真实配置：
+
+```powershell
+python -m pip install -r requirements.txt
+Copy-Item config\config.example.json config\config.json
+python run.py
+```
+
+打开 `http://127.0.0.1:8100`，拉取审核数据，进入一条具有 `metadata.timestamp` 的记录后点击“日志诊断”。弹窗会显示 Surface/DET 覆盖层、Deskew、CLS、OCR 和可复制的原始日志。
+
+## 24.3 独立 API 测试
+
+无需打开前端即可调用统一查询入口：
+
+```powershell
+$body = @{
+  project_id = "binxin_billet"
+  event_time = "2026-08-24T17:25:17"
+  expected_result = "10135X5X"
+  station = "73"
+} | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8100/api/diagnostics/analyze -ContentType application/json -Body $body
+```
+
+返回包含 `result` 与 `overlays`。SSH、认证或日志路径错误会以不含密码的中文信息返回；时间窗口无日志或无匹配事件返回 `matched=false`。

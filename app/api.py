@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
+import json
 import logging
 from pathlib import Path
 from urllib.parse import urlparse
@@ -14,6 +15,8 @@ from app import db
 from app.core.config import settings
 from app.core.registry import build_source
 from app.services.review_service import review_service
+from app.diagnostics.models import DiagnosticQuery
+from app.diagnostics.service import diagnostic_service
 
 logger = logging.getLogger("data_review_platform")
 
@@ -51,6 +54,11 @@ class UploadRequest(BaseModel):
 
 class SinkAuthRequest(BaseModel):
     project_id: str
+
+
+class DiagnosticItemRequest(BaseModel):
+    project_id: str
+    station: str | None = None
 
 
 @app.get("/")
@@ -119,6 +127,48 @@ def upload(req: UploadRequest):
             req.business_date,
         )
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/diagnostics/analyze")
+def diagnose(query: DiagnosticQuery):
+    try:
+        return diagnostic_service.analyze_for_render(query)
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Log diagnostics failed: project=%s", query.project_id)
+        raise HTTPException(status_code=502, detail="日志诊断服务异常，请查看后端日志") from exc
+
+
+@app.post("/api/diagnostics/items/{item_id}")
+def diagnose_item(item_id: int, req: DiagnosticItemRequest):
+    with db.connect() as conn:
+        row = conn.execute(
+            "SELECT project_id, recognition_text, image_url, metadata_json FROM items WHERE id=?",
+            (item_id,),
+        ).fetchone()
+    if not row or row["project_id"] != req.project_id:
+        raise HTTPException(status_code=404, detail="审核条目不存在")
+    metadata = json.loads(row["metadata_json"] or "{}")
+    timestamp = str(metadata.get("timestamp") or "").strip()
+    try:
+        event_time = datetime.fromisoformat(timestamp.replace("/", "-"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="当前条目缺少可用于诊断的采集时间") from exc
+    query = DiagnosticQuery(
+        project_id=req.project_id,
+        event_time=event_time,
+        expected_result=row["recognition_text"] or None,
+        station=req.station or metadata.get("station"),
+        image_name=metadata.get("image_name"),
+    )
+    try:
+        return diagnostic_service.analyze_for_render(query)
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Item diagnostics failed: item=%s", item_id)
+        raise HTTPException(status_code=502, detail="日志诊断服务异常，请查看后端日志") from exc
 
 
 @app.get("/api/items/{item_id}/image")

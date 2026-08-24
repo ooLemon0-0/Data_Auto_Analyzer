@@ -16,9 +16,11 @@ const itemCounter = $("itemCounter");
 const decisionBadge = $("decisionBadge");
 const sourceKey = $("sourceKey");
 const toast = $("toast");
+const diagnosticBtn = $("diagnosticBtn");
 let state = null;
 let rotation = 0;
 let renderedItemId = null;
+let hasLoadedDiagnostics = false;
 
 function todayLocal() {
   const d = new Date();
@@ -115,6 +117,7 @@ function render(s) {
     rotation = 0;
 
     rotateBtn.disabled = true;
+    diagnosticBtn.disabled = true;
 
     reviewImage.style.display =
       "none";
@@ -142,6 +145,7 @@ function render(s) {
   }
 
   rotateBtn.disabled = false;
+  diagnosticBtn.disabled = false;
 
   emptyState.style.display =
     "none";
@@ -276,6 +280,72 @@ nextBtn.addEventListener("click", () => navigate("next"));
 rotateBtn.addEventListener("click", rotateImage);
 reviewImage.addEventListener("load", fitRotatedImage);
 window.addEventListener("resize", fitRotatedImage);
+
+function escapeHtml(value) {
+  return String(value ?? "—").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+function drawDiagnosticOverlays(payload) {
+  const img = $("diagnosticImage"), svg = $("diagnosticOverlay");
+  const event = payload.result.event || {}, surface = event.surface || {};
+  const width = surface.image_width || img.naturalWidth, height = surface.image_height || img.naturalHeight;
+  if (!width || !height) return;
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.innerHTML = (payload.overlays || []).map(overlay => {
+    if (overlay.role === "deskew") {
+      const labelWidth = Math.max(420, overlay.label.length * 32);
+      return `<g class="overlay-deskew ${escapeHtml(overlay.state || "unknown")}"><rect x="24" y="24" width="${labelWidth}" height="64" rx="12"/><text x="44" y="67">${escapeHtml(overlay.label)}</text></g>`;
+    }
+    if (overlay.box) {
+      const b = overlay.box;
+      return `<g><rect class="overlay-surface" x="${b.x1}" y="${b.y1}" width="${b.x2-b.x1}" height="${b.y2-b.y1}"/><text class="overlay-label" x="${b.x1+4}" y="${Math.max(16,b.y1-5)}">${escapeHtml(overlay.label)}</text></g>`;
+    }
+    const polygonPoints = overlay.polygon?.points || [];
+    const points = polygonPoints.map(p => `${p.x},${p.y}`).join(" ");
+    const labelX = polygonPoints.length ? Math.min(...polygonPoints.map(p => p.x)) : 0;
+    const labelY = polygonPoints.length ? Math.min(...polygonPoints.map(p => p.y)) : 0;
+    const boxY = Math.max(96, labelY - 58);
+    const labelWidth = Math.max(460, overlay.label.length * 16);
+    return `<g class="overlay-det-group ${escapeHtml(overlay.state || "unknown")}"><polygon class="overlay-det" points="${points}"/>${polygonPoints.length ? `<rect class="overlay-label-bg" x="${labelX}" y="${boxY-38}" width="${labelWidth}" height="48" rx="8"/><text class="overlay-label" x="${labelX+12}" y="${boxY-5}">${escapeHtml(overlay.label)}</text>` : ""}</g>`;
+  }).join("");
+}
+
+async function openDiagnostics() {
+  if (!state?.current) return;
+  const modal = $("diagnosticModal");
+  modal.hidden = false; $("diagnosticLoading").hidden = false; $("diagnosticError").hidden = true; $("diagnosticContent").hidden = true;
+  $("diagnosticLoadingTitle").textContent = hasLoadedDiagnostics
+    ? "正在读取日志诊断…"
+    : "首次加载需要连接现场并读取日志";
+  $("diagnosticLoadingHint").textContent = hasLoadedDiagnostics
+    ? "邻近时间的日志通常会直接使用缓存"
+    : "第一次加载可能稍慢，请稍候";
+  try {
+    const payload = await api(`/api/diagnostics/items/${state.current.item_id}`, {method:"POST", body:JSON.stringify({project_id:state.project_id, station:state.current.metadata?.station || null})});
+    if (!payload.result.matched) throw new Error((payload.result.warnings || ["没有匹配事件"]).join("；"));
+    $("rawLog").textContent = payload.result.event?.raw_log || "";
+    const img = $("diagnosticImage");
+    const originalImageUrl = payload.result.event?.image_url;
+    if (!originalImageUrl) throw new Error("日志事件没有返回原图 URL，无法按原图坐标渲染诊断框");
+    img.onload = () => drawDiagnosticOverlays(payload);
+    img.onerror = () => {
+      $("diagnosticContent").hidden = true;
+      $("diagnosticError").hidden = false;
+      $("diagnosticError").textContent = `日志原图加载失败：${originalImageUrl}`;
+    };
+    img.src = originalImageUrl;
+    $("diagnosticLoading").hidden = true; $("diagnosticContent").hidden = false;
+  } catch (err) {
+    $("diagnosticLoading").hidden = true; $("diagnosticError").hidden = false; $("diagnosticError").textContent = err.message;
+  } finally {
+    hasLoadedDiagnostics = true;
+  }
+}
+
+diagnosticBtn.addEventListener("click", openDiagnostics);
+$("diagnosticClose").addEventListener("click", () => $("diagnosticModal").hidden = true);
+$("diagnosticModal").addEventListener("click", e => { if (e.target === $("diagnosticModal")) $("diagnosticModal").hidden = true; });
+$("copyLogBtn").addEventListener("click", async e => { e.preventDefault(); try { await navigator.clipboard.writeText($("rawLog").textContent); notify("日志已复制"); } catch (_) { notify("当前浏览器不支持自动复制"); } });
 
 uploadBtn.addEventListener(
   "click",

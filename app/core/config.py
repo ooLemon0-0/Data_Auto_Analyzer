@@ -26,6 +26,7 @@ class ProjectConfig(BaseModel):
     source: dict[str, Any]
     cache: dict[str, Any] = Field(default_factory=dict)
     sink: dict[str, Any] = Field(default_factory=dict)
+    diagnostics: dict[str, Any] = Field(default_factory=dict)
 
 
 class AppConfig(BaseModel):

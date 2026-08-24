@@ -52,6 +52,7 @@
         <div class="meta" id="sourceKey">source: —</div>
 
         <div class="decision-grid">
+          <button id="diagnosticBtn" class="decision diagnostic" type="button" disabled>日志诊断</button>
           <button class="decision correct" data-decision="correct"><kbd>1</kbd> 正确</button>
           <button class="decision incorrect" data-decision="incorrect"><kbd>2</kbd> 错误</button>
           <button class="decision invalid" data-decision="invalid"><kbd>3</kbd> 无效 · 自动补抽</button>
@@ -67,6 +68,25 @@
 
     <div id="toast" class="toast"></div>
   </main>
+  <div id="diagnosticModal" class="diagnostic-modal" hidden>
+    <div class="diagnostic-dialog" role="dialog" aria-modal="true" aria-labelledby="diagnosticTitle">
+      <header><h2 id="diagnosticTitle">日志诊断</h2><button id="diagnosticClose" aria-label="关闭">×</button></header>
+      <div id="diagnosticLoading" class="diagnostic-loading">
+        <span class="diagnostic-spinner" aria-hidden="true"></span>
+        <strong id="diagnosticLoadingTitle">正在读取现场日志并匹配事件…</strong>
+        <small id="diagnosticLoadingHint"></small>
+      </div>
+      <div id="diagnosticError" class="diagnostic-error" hidden></div>
+      <div id="diagnosticContent" hidden>
+        <div class="diagnostic-grid">
+          <div class="diagnostic-visual"><div id="diagnosticImageWrap" class="diagnostic-image-wrap">
+            <img id="diagnosticImage" alt="诊断原图" /><svg id="diagnosticOverlay" preserveAspectRatio="none"></svg>
+          </div></div>
+        </div>
+        <details class="raw-log"><summary>查看原始日志 <button id="copyLogBtn" type="button">复制日志</button></summary><pre id="rawLog"></pre></details>
+      </div>
+    </div>
+  </div>
 <script src="/static/app.js"></script>
 </body>
 </html>

@@ -41,6 +41,7 @@
         "pagination": {
           "next_button": ".el-pagination button.btn-next",
           "active_page": ".el-pagination .el-pager li.is-active.number",
+          "page_change_timeout_ms": 15000,
           "max_pages": 200
         },
         "export": {
@@ -62,6 +63,48 @@
             "login_button": "button:has-text(\"登录\")"
           },
           "page_settle_timeout_ms": 10000
+        }
+      },
+      "diagnostics": {
+        "enabled": true,
+        "default_station": "73",
+        "parser": {
+          "type": "binxin_ocr",
+          "version": 1,
+          "match": {
+            "max_time_difference_seconds": 20,
+            "time_weight": 30,
+            "result_weight": 50,
+            "image_name_weight": 100
+          }
+        },
+        "stations": {
+          "73": {
+            "source": {
+              "type": "ssh_file",
+              "host": "172.30.31.73",
+              "port": 22,
+              "username": "lcfc",
+              "allow_unknown_host": true,
+              "connect_timeout_seconds": 10,
+              "command_timeout_seconds": 20,
+              "auth": {
+                "type": "password",
+                "password": ""
+              }
+            },
+            "log": {
+              "path": "/home/lcfc/cisdi/logs/supervisor/BXCppAlgoInfo.log",
+              "encoding": "utf-8",
+              "before_seconds": 8,
+              "after_seconds": 15,
+              "boundary_sample_lines": 80,
+              "cache_window_seconds": 180,
+              "cache_ttl_seconds": 300,
+              "cache_max_entries": 12,
+              "max_output_bytes": 8388608
+            }
+          }
         }
       },
       "cache": {

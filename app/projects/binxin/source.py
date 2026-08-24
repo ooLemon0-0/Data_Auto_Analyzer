@@ -327,20 +327,62 @@ class BinxinHistorySource(DataSource):
                 result.append(item)
         return result
 
+    @staticmethod
+    def _table_signature(page, row_selector: str) -> str:
+        """Return a stable-enough marker used only to observe table replacement."""
+        row = page.locator(row_selector).first
+        if not row.count():
+            return ""
+        text = row.inner_text().strip()
+        image = row.locator("img").first
+        image_src = image.get_attribute("src") if image.count() else ""
+        return f"{text}\n{image_src or ''}"
+
+    @staticmethod
+    def _exact_page_button(page, page_number: int):
+        """Element Plus may render 1, 10 and 11 together; match exact text."""
+        buttons = page.locator(".el-pagination .el-pager li.number")
+        for index in range(buttons.count()):
+            button = buttons.nth(index)
+            if button.inner_text().strip() == str(page_number):
+                return button
+        return None
+
     def _scrape_all_pages(self, page) -> list[SourceItem]:
         pagination_cfg = self.source.get("pagination", {})
         next_selector = pagination_cfg.get("next_button", ".el-pagination button.btn-next")
         active_selector = pagination_cfg.get("active_page", ".el-pagination .el-pager li.is-active.number")
+        row_selector = self.source.get("selectors", {}).get(
+            "table_rows", ".table-wrapper .el-table__body tbody tr.el-table__row"
+        )
         max_pages = int(pagination_cfg.get("max_pages", 200))
+        page_change_timeout_ms = int(pagination_cfg.get("page_change_timeout_ms", 15000))
 
         # Ensure we are on page 1 after a new date filter.
-        first_page = page.locator('.el-pagination .el-pager li.number').filter(has_text="1").first
-        if first_page.count() and first_page.is_visible():
+        first_page = self._exact_page_button(page, 1)
+        if first_page is not None and first_page.is_visible():
             active = page.locator(active_selector).first
             active_text = active.inner_text().strip() if active.count() else "1"
             if active_text != "1":
+                before_signature = self._table_signature(page, row_selector)
                 first_page.click()
-                page.wait_for_timeout(800)
+                try:
+                    page.wait_for_function(
+                        """
+                        ([activeSelector, rowSelector, beforeSignature]) => {
+                          const active = document.querySelector(activeSelector);
+                          const row = document.querySelector(rowSelector);
+                          if (!active || active.textContent.trim() !== '1' || !row) return false;
+                          const image = row.querySelector('img');
+                          const signature = `${row.innerText.trim()}\n${image?.getAttribute('src') || ''}`;
+                          return signature && signature !== beforeSignature;
+                        }
+                        """,
+                        arg=[active_selector, row_selector, before_signature],
+                        timeout=page_change_timeout_ms,
+                    )
+                except PlaywrightTimeoutError as exc:
+                    raise RuntimeError("分页返回第 1 页后，表格数据未刷新") from exc
 
         all_items: list[SourceItem] = []
         seen_keys: set[str] = set()
@@ -359,15 +401,29 @@ class BinxinHistorySource(DataSource):
                 break
 
             before_page = page_no
+            before_signature = self._table_signature(page, row_selector)
             next_button.click()
             try:
                 page.wait_for_function(
-                    "([selector, before]) => { const el=document.querySelector(selector); return el && el.textContent.trim() !== String(before); }",
-                    arg=[active_selector, before_page],
-                    timeout=15000,
+                    """
+                    ([activeSelector, rowSelector, beforePage, beforeSignature]) => {
+                      const active = document.querySelector(activeSelector);
+                      const row = document.querySelector(rowSelector);
+                      if (!active || active.textContent.trim() === String(beforePage) || !row) return false;
+                      const image = row.querySelector('img');
+                      const signature = `${row.innerText.trim()}\n${image?.getAttribute('src') || ''}`;
+                      return signature && signature !== beforeSignature;
+                    }
+                    """,
+                    arg=[active_selector, row_selector, before_page, before_signature],
+                    timeout=page_change_timeout_ms,
                 )
-            except PlaywrightTimeoutError:
-                page.wait_for_timeout(1200)
+            except PlaywrightTimeoutError as exc:
+                active = page.locator(active_selector).first
+                active_text = active.inner_text().strip() if active.count() else "未知"
+                raise RuntimeError(
+                    f"分页从第 {before_page} 页切换后表格数据未刷新（当前页码: {active_text}）"
+                ) from exc
         else:
             raise RuntimeError(f"分页超过 max_pages={max_pages}，为避免死循环已停止")
 
