@@ -17,10 +17,12 @@ const decisionBadge = $("decisionBadge");
 const sourceKey = $("sourceKey");
 const toast = $("toast");
 const diagnosticBtn = $("diagnosticBtn");
+const manualDiagnosticBtn = $("manualDiagnosticBtn");
 let state = null;
 let rotation = 0;
 let renderedItemId = null;
 let hasLoadedDiagnostics = false;
+let diagnosticSearchMatches = [];
 
 function todayLocal() {
   const d = new Date();
@@ -287,8 +289,7 @@ function escapeHtml(value) {
 
 function drawDiagnosticOverlays(payload) {
   const img = $("diagnosticImage"), svg = $("diagnosticOverlay");
-  const event = payload.result.event || {}, surface = event.surface || {};
-  const width = surface.image_width || img.naturalWidth, height = surface.image_height || img.naturalHeight;
+  const width = payload.image_width || img.naturalWidth, height = payload.image_height || img.naturalHeight;
   if (!width || !height) return;
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
   svg.innerHTML = (payload.overlays || []).map(overlay => {
@@ -310,31 +311,77 @@ function drawDiagnosticOverlays(payload) {
   }).join("");
 }
 
+function diagnosticEventText(event) {
+  return event?.details?.ocr?.joined_text || "(空识别结果)";
+}
+
+function diagnosticEventTime(event) {
+  const value = event?.trigger_time || event?.start_time || event?.finish_time;
+  return value ? value.replace("T", " ").slice(0, 19) : "时间未知";
+}
+
+function renderDiagnosticPayload(payload, sourceName = "") {
+  const event = payload.result?.event;
+  $("rawLog").textContent = event?.raw_log || "";
+  $("diagnosticMatchMeta").innerHTML = [
+    sourceName ? `<span>日志源：${escapeHtml(sourceName)}</span>` : "",
+    `<span>时间：${escapeHtml(diagnosticEventTime(event))}</span>`,
+    `<span>识别：${escapeHtml(diagnosticEventText(event))}</span>`,
+    event?.image_name ? `<span>图片：${escapeHtml(event.image_name)}</span>` : "",
+  ].filter(Boolean).join("");
+
+  const img = $("diagnosticImage");
+  const visual = $("diagnosticVisual");
+  const originalImageUrl = event?.image_url;
+  $("diagnosticOverlay").innerHTML = "";
+  $("diagnosticLoading").hidden = true;
+  $("diagnosticContent").hidden = false;
+  $("diagnosticError").hidden = true;
+
+  if (!originalImageUrl) {
+    visual.hidden = true;
+    $("diagnosticMatchMeta").insertAdjacentHTML(
+      "beforeend",
+      '<span class="diagnostic-inline-warning">该日志事件没有原图 URL，仅展示原始日志</span>',
+    );
+    return;
+  }
+
+  visual.hidden = false;
+  img.onload = () => drawDiagnosticOverlays(payload);
+  img.onerror = () => {
+    visual.hidden = true;
+    $("diagnosticMatchMeta").insertAdjacentHTML(
+      "beforeend",
+      `<span class="diagnostic-inline-warning">原图加载失败：${escapeHtml(originalImageUrl)}</span>`,
+    );
+  };
+  img.src = originalImageUrl;
+}
+
+function setDiagnosticLoading(title, hint = "") {
+  $("diagnosticLoading").hidden = false;
+  $("diagnosticLoadingTitle").textContent = title;
+  $("diagnosticLoadingHint").textContent = hint;
+  $("diagnosticError").hidden = true;
+  $("diagnosticContent").hidden = true;
+}
+
 async function openDiagnostics() {
   if (!state?.current) return;
   const modal = $("diagnosticModal");
-  modal.hidden = false; $("diagnosticLoading").hidden = false; $("diagnosticError").hidden = true; $("diagnosticContent").hidden = true;
-  $("diagnosticLoadingTitle").textContent = hasLoadedDiagnostics
-    ? "正在读取日志诊断…"
-    : "首次加载需要连接现场并读取日志";
-  $("diagnosticLoadingHint").textContent = hasLoadedDiagnostics
-    ? "邻近时间的日志通常会直接使用缓存"
-    : "第一次加载可能稍慢，请稍候";
+  modal.hidden = false;
+  $("diagnosticTitle").textContent = "日志诊断";
+  $("diagnosticSearchForm").hidden = true;
+  $("diagnosticSearchResults").hidden = true;
+  setDiagnosticLoading(
+    hasLoadedDiagnostics ? "正在读取日志诊断…" : "首次加载需要连接现场并读取日志",
+    hasLoadedDiagnostics ? "邻近时间的日志通常会直接使用缓存" : "第一次加载可能稍慢，请稍候",
+  );
   try {
     const payload = await api(`/api/diagnostics/items/${state.current.item_id}`, {method:"POST", body:JSON.stringify({project_id:state.project_id, station:state.current.metadata?.station || null})});
     if (!payload.result.matched) throw new Error((payload.result.warnings || ["没有匹配事件"]).join("；"));
-    $("rawLog").textContent = payload.result.event?.raw_log || "";
-    const img = $("diagnosticImage");
-    const originalImageUrl = payload.result.event?.image_url;
-    if (!originalImageUrl) throw new Error("日志事件没有返回原图 URL，无法按原图坐标渲染诊断框");
-    img.onload = () => drawDiagnosticOverlays(payload);
-    img.onerror = () => {
-      $("diagnosticContent").hidden = true;
-      $("diagnosticError").hidden = false;
-      $("diagnosticError").textContent = `日志原图加载失败：${originalImageUrl}`;
-    };
-    img.src = originalImageUrl;
-    $("diagnosticLoading").hidden = true; $("diagnosticContent").hidden = false;
+    renderDiagnosticPayload(payload);
   } catch (err) {
     $("diagnosticLoading").hidden = true; $("diagnosticError").hidden = false; $("diagnosticError").textContent = err.message;
   } finally {
@@ -342,7 +389,92 @@ async function openDiagnostics() {
   }
 }
 
+function toDateTimeLocal(date) {
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 19);
+}
+
+function openManualDiagnostics() {
+  const now = new Date();
+  const start = new Date(now.getTime() - 5 * 60 * 1000);
+  $("diagnosticModal").hidden = false;
+  $("diagnosticTitle").textContent = "查日志";
+  $("diagnosticSearchForm").hidden = false;
+  $("diagnosticSearchResults").hidden = true;
+  $("diagnosticLoading").hidden = true;
+  $("diagnosticError").hidden = true;
+  $("diagnosticContent").hidden = true;
+  $("diagnosticStartTime").value = toDateTimeLocal(start);
+  $("diagnosticEndTime").value = toDateTimeLocal(now);
+  $("diagnosticExpectedResult").value = "";
+  $("diagnosticImageName").value = "";
+  diagnosticSearchMatches = [];
+}
+
+function showDiagnosticSearchMatch(index) {
+  const match = diagnosticSearchMatches[index];
+  if (!match) return;
+  document.querySelectorAll(".diagnostic-result-item").forEach((button, buttonIndex) => {
+    button.classList.toggle("active", buttonIndex === index);
+  });
+  renderDiagnosticPayload(match.payload, match.source_name);
+}
+
+$("diagnosticSearchForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const searchButton = $("diagnosticSearchBtn");
+  searchButton.disabled = true;
+  searchButton.textContent = "查询中…";
+  $("diagnosticSearchResults").hidden = true;
+  setDiagnosticLoading("正在查询主、备用服务器日志…", "时间段越长，读取时间可能越久");
+  try {
+    const result = await api("/api/diagnostics/search", {
+      method: "POST",
+      body: JSON.stringify({
+        project_id: projectSelect.value,
+        start_time: $("diagnosticStartTime").value,
+        end_time: $("diagnosticEndTime").value,
+        expected_result: $("diagnosticExpectedResult").value.trim() || null,
+        image_name: $("diagnosticImageName").value.trim() || null,
+      }),
+    });
+    diagnosticSearchMatches = result.matches || [];
+    $("diagnosticLoading").hidden = true;
+    $("diagnosticSearchResults").hidden = false;
+    const warnings = (result.warnings || []).join("；");
+    $("diagnosticSearchSummary").textContent = diagnosticSearchMatches.length
+      ? `找到 ${diagnosticSearchMatches.length} 条匹配日志${warnings ? `；${warnings}` : ""}`
+      : warnings || "没有找到匹配日志";
+    $("diagnosticResultList").innerHTML = diagnosticSearchMatches.map((match, index) => {
+      const eventData = match.payload.result.event;
+      return `<button class="diagnostic-result-item" type="button" data-index="${index}">
+        <strong>${escapeHtml(diagnosticEventText(eventData))}</strong>
+        <span>${escapeHtml(diagnosticEventTime(eventData))}</span>
+        <small>${escapeHtml(match.source_name)}${eventData?.image_name ? ` · ${escapeHtml(eventData.image_name)}` : ""}</small>
+      </button>`;
+    }).join("");
+    document.querySelectorAll(".diagnostic-result-item").forEach(button => {
+      button.addEventListener("click", () => showDiagnosticSearchMatch(Number(button.dataset.index)));
+    });
+    if (diagnosticSearchMatches.length) showDiagnosticSearchMatch(0);
+    else {
+      $("diagnosticContent").hidden = true;
+      $("diagnosticError").hidden = false;
+      $("diagnosticError").textContent = warnings || "没有找到匹配日志";
+    }
+  } catch (err) {
+    $("diagnosticLoading").hidden = true;
+    $("diagnosticError").hidden = false;
+    $("diagnosticError").textContent = err.message;
+  } finally {
+    searchButton.disabled = false;
+    searchButton.textContent = "查询";
+    hasLoadedDiagnostics = true;
+  }
+});
+
 diagnosticBtn.addEventListener("click", openDiagnostics);
+manualDiagnosticBtn.addEventListener("click", openManualDiagnostics);
 $("diagnosticClose").addEventListener("click", () => $("diagnosticModal").hidden = true);
 $("diagnosticModal").addEventListener("click", e => { if (e.target === $("diagnosticModal")) $("diagnosticModal").hidden = true; });
 $("copyLogBtn").addEventListener("click", async e => { e.preventDefault(); try { await navigator.clipboard.writeText($("rawLog").textContent); notify("日志已复制"); } catch (_) { notify("当前浏览器不支持自动复制"); } });

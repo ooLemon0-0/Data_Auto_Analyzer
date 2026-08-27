@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "data-auto-analyzer"
+version = "0.1.0"
+description = "多项目数据抽样审核与准确率统计平台"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi==0.116.1",
+    "uvicorn[standard]==0.35.0",
+    "pydantic==2.11.7",
+    "requests==2.32.4",
+    "playwright==1.54.0",
+    "python-multipart==0.0.20",
+    "pyperclip==1.9.0",
+    "paramiko==3.5.1",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*"]

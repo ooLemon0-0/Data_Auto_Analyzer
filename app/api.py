@@ -15,8 +15,9 @@ from app import db
 from app.core.config import settings
 from app.core.registry import build_source
 from app.services.review_service import review_service
-from app.diagnostics.models import DiagnosticQuery
+from app.diagnostics.models import DiagnosticQuery, DiagnosticSearchQuery
 from app.diagnostics.service import diagnostic_service
+from app.remote_access.service import RemoteAccessError, remote_access_service
 
 logger = logging.getLogger("data_review_platform")
 
@@ -61,6 +62,10 @@ class DiagnosticItemRequest(BaseModel):
     station: str | None = None
 
 
+class RemoteAccessRequest(BaseModel):
+    connection_id: str
+
+
 @app.get("/")
 def index():
     return FileResponse(STATIC_DIR / "index.html")
@@ -73,6 +78,24 @@ def projects():
         for p in settings.projects
         if p.enabled
     ]
+
+
+@app.get("/api/remote-access/{connection_id}/status")
+def remote_access_status(connection_id: str):
+    try:
+        return remote_access_service.status(connection_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/remote-access/launch")
+def launch_remote_access(req: RemoteAccessRequest):
+    try:
+        return remote_access_service.launch(req.connection_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RemoteAccessError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/review/state")
@@ -138,6 +161,17 @@ def diagnose(query: DiagnosticQuery):
     except Exception as exc:
         logger.exception("Log diagnostics failed: project=%s", query.project_id)
         raise HTTPException(status_code=502, detail="日志诊断服务异常，请查看后端日志") from exc
+
+
+@app.post("/api/diagnostics/search")
+def search_diagnostics(query: DiagnosticSearchQuery):
+    try:
+        return diagnostic_service.search_for_render(query)
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Log search failed: project=%s", query.project_id)
+        raise HTTPException(status_code=502, detail="日志查询服务异常，请查看后端日志") from exc
 
 
 @app.post("/api/diagnostics/items/{item_id}")

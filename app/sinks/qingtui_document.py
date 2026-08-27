@@ -6,6 +6,7 @@ import os
 import subprocess
 import time
 from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -1894,6 +1895,134 @@ class QingTuiDocumentSink(DataSink):
     # ============================================================
     # Spreadsheet operations
     # ============================================================
+    @staticmethod
+    def _validate_sheet_name(sheet_name: str) -> None:
+        invalid = set('[]:*?/\\')
+        if any(char in invalid for char in sheet_name):
+            raise RuntimeError(
+                f"工作表名称 {sheet_name!r} 包含非法字符 []:*?/\\"
+            )
+        if len(sheet_name) > 31:
+            raise RuntimeError("工作表名称不能超过 31 个字符")
+
+    @staticmethod
+    def _sheet_locator(frame, sheet_name: str):
+        names = frame.locator(".sheet-name")
+        for index in range(names.count()):
+            candidate = names.nth(index)
+            actual = (
+                candidate.get_attribute("data-name")
+                or candidate.inner_text().strip()
+            )
+            if actual == sheet_name:
+                return candidate
+        return None
+
+    def _create_sheet(
+        self,
+        page,
+        frame,
+        sheet_name: str,
+        selectors: dict,
+    ):
+        self._validate_sheet_name(sheet_name)
+        names = frame.locator(".sheet-name")
+        before_count = names.count()
+        configured_add = str(selectors.get("sheet_add_button", "")).strip()
+        add_selectors = [configured_add] if configured_add else [
+            ".sheets-add-btn-wrapper button",
+            ".sheets-add-btn-wrapper",
+            '[data-sheet-add="true"] button',
+            '[data-command="add-sheet"]',
+            '[title*="新建工作表"]',
+            '[aria-label*="新建工作表"]',
+            '[title*="新增工作表"]',
+            ".sheet-add",
+            ".add-sheet",
+            ".add-sheet-btn",
+        ]
+        created = False
+        for selector in add_selectors:
+            try:
+                button = frame.locator(selector).first
+                if button.count() and button.is_visible():
+                    button.click()
+                    created = True
+                    break
+            except Exception:
+                continue
+        if not created:
+            grid = frame.locator("#et_grid").first
+            if not grid.count():
+                raise RuntimeError("找不到新增工作表按钮，也找不到 WPS 表格焦点")
+            grid.click()
+            page.keyboard.press("Shift+F11")
+
+        deadline = time.time() + float(selectors.get("sheet_create_timeout_seconds", 20))
+        while time.time() < deadline and names.count() <= before_count:
+            page.wait_for_timeout(150)
+        if names.count() <= before_count:
+            raise RuntimeError(f"创建工作表 {sheet_name!r} 后未检测到新标签")
+
+        new_sheet = names.nth(names.count() - 1)
+        existing_name = (
+            new_sheet.get_attribute("data-name")
+            or new_sheet.inner_text().strip()
+        )
+        if existing_name != sheet_name:
+            try:
+                new_sheet.dblclick()
+            except Exception:
+                new_sheet.click(button="right")
+                rename_menu = frame.get_by_text("重命名", exact=True).last
+                if not rename_menu.count():
+                    raise RuntimeError("新工作表已创建，但找不到“重命名”操作")
+                rename_menu.click()
+            page.wait_for_timeout(150)
+            configured_input = str(selectors.get("sheet_rename_input", "")).strip()
+            input_selectors = [configured_input] if configured_input else [
+                ".sheet-name-input",
+                ".sheet-name-input input",
+                ".sheet-rename-input",
+                ".sheet-tab input",
+                'input[aria-label*="工作表"]',
+            ]
+            rename_input = None
+            for selector in input_selectors:
+                try:
+                    candidate = frame.locator(selector).last
+                    if candidate.count() and candidate.is_visible():
+                        rename_input = candidate
+                        break
+                except Exception:
+                    continue
+            if rename_input is None:
+                new_sheet.click(button="right")
+                rename_menu = frame.get_by_text("重命名", exact=True).last
+                if rename_menu.count():
+                    rename_menu.click()
+                    page.wait_for_timeout(150)
+                    for selector in input_selectors:
+                        try:
+                            candidate = frame.locator(selector).last
+                            if candidate.count() and candidate.is_visible():
+                                rename_input = candidate
+                                break
+                        except Exception:
+                            continue
+            if rename_input is None:
+                raise RuntimeError("新工作表已创建，但找不到工作表名称输入框")
+            rename_input.fill(sheet_name)
+            rename_input.press("Enter")
+
+        deadline = time.time() + float(selectors.get("sheet_create_timeout_seconds", 20))
+        while time.time() < deadline:
+            sheet = self._sheet_locator(frame, sheet_name)
+            if sheet is not None:
+                return sheet
+            page.wait_for_timeout(150)
+        raise RuntimeError(f"工作表已创建，但重命名为 {sheet_name!r} 后校验失败")
+
     def _select_sheet_if_configured(
         self,
         page,
@@ -1920,15 +2049,9 @@ class QingTuiDocumentSink(DataSink):
                 "选择 Sheet 时找不到 WPS iframe。"
             )
 
-        sheet = (
-            frame
-            .locator(
-                f'.sheet-name[data-name="{sheet_name}"]'
-            )
-            .first
-        )
+        sheet = self._sheet_locator(frame, sheet_name)
 
-        if not sheet.count():
+        if sheet is None:
 
             names = (
                 frame
@@ -1956,9 +2079,13 @@ class QingTuiDocumentSink(DataSink):
                     .strip()
                 )
 
-            raise RuntimeError(
-                f"找不到工作表 {sheet_name!r}，"
-                f"当前 sheets={available}"
+            if not selectors.get("create_sheet_if_missing", True):
+                raise RuntimeError(
+                    f"找不到工作表 {sheet_name!r}，"
+                    f"当前 sheets={available}"
+                )
+            sheet = self._create_sheet(
+                page, frame, sheet_name, selectors
             )
 
         sheet.click()
@@ -2212,19 +2339,7 @@ class QingTuiDocumentSink(DataSink):
         )
 
         # ----------------------------------------
-        # 1. 整表内容校验
-        # ----------------------------------------
-
-        if actual != expected:
-
-            raise RuntimeError(
-                "WPS 写入后回读校验失败。\n"
-                f"expected={expected}\n"
-                f"actual={actual}"
-            )
-
-        # ----------------------------------------
-        # 2. Header 校验
+        # 1. Header 校验
         # ----------------------------------------
 
         expected_headers = [
@@ -2243,6 +2358,31 @@ class QingTuiDocumentSink(DataSink):
                 f"expected={expected_headers}, "
                 f"actual="
                 f"{actual[0] if actual else None}"
+            )
+
+        # ----------------------------------------
+        # 2. 整表内容语义校验
+        #
+        # WPS 会自动格式化日期和百分比，例如：
+        #   2026-08-25 -> 2026/8/25
+        #   98.0%      -> 98.00%
+        # 这些显示形式不同，但单元格值在业务上相同。
+        # ----------------------------------------
+
+        mismatch = self._semantic_table_mismatch(
+            expected,
+            actual,
+            specs,
+            sink_cfg,
+        )
+
+        if mismatch is not None:
+
+            raise RuntimeError(
+                "WPS 写入后回读校验失败。\n"
+                f"detail={mismatch}\n"
+                f"expected={expected}\n"
+                f"actual={actual}"
             )
 
         # ----------------------------------------
@@ -2301,6 +2441,171 @@ class QingTuiDocumentSink(DataSink):
             )
 
         return actual
+
+    @staticmethod
+    def _decimal_cell(
+        value: Any,
+    ) -> Decimal | None:
+
+        text = str(
+            value
+            if value is not None
+            else ""
+        ).strip().replace(
+            ",",
+            "",
+        )
+
+        if not text:
+            return None
+
+        try:
+            return Decimal(
+                text
+            )
+        except InvalidOperation:
+            return None
+
+    @classmethod
+    def _accuracy_percent_cell(
+        cls,
+        value: Any,
+    ) -> Decimal | None:
+
+        text = str(
+            value
+            if value is not None
+            else ""
+        ).strip()
+
+        if not text:
+            return None
+
+        has_percent = text.endswith(
+            "%"
+        )
+
+        if has_percent:
+            text = text[:-1].strip()
+
+        parsed = cls._decimal_cell(
+            text
+        )
+
+        if parsed is None:
+            return None
+
+        # 剪贴板有时会返回显示值 98.00%，有时会返回底层值 0.98。
+        if not has_percent and abs(parsed) <= Decimal("1"):
+            parsed *= Decimal("100")
+
+        return parsed
+
+    def _semantic_table_mismatch(
+        self,
+        expected: list[list[str]],
+        actual: list[list[str]],
+        specs: list[dict[str, str]],
+        sink_cfg: dict,
+    ) -> str | None:
+
+        if len(actual) != len(expected):
+            return (
+                "行数不一致："
+                f"expected={len(expected)}, actual={len(actual)}"
+            )
+
+        fmt = sink_cfg.get(
+            "format",
+            {},
+        )
+
+        date_field = fmt.get(
+            "date_field",
+            "date",
+        )
+
+        numeric_fields = set(
+            fmt.get(
+                "numeric_fields",
+                [
+                    "sample_count",
+                    "correct",
+                    "incorrect",
+                    "invalid",
+                ],
+            )
+        )
+
+        for row_index, (
+            expected_row,
+            actual_row,
+        ) in enumerate(
+            zip(expected, actual),
+            start=1,
+        ):
+
+            for column_index, spec in enumerate(
+                specs,
+                start=1,
+            ):
+
+                field = spec["field"]
+                expected_value = expected_row[column_index - 1]
+                actual_value = actual_row[column_index - 1]
+
+                if row_index == 1:
+                    matches = actual_value == expected_value
+                elif field == date_field:
+                    expected_date = self._parse_date_cell(
+                        expected_value,
+                        sink_cfg,
+                    )
+                    actual_date = self._parse_date_cell(
+                        actual_value,
+                        sink_cfg,
+                    )
+                    matches = (
+                        expected_date is not None
+                        and actual_date is not None
+                        and actual_date == expected_date
+                    )
+                elif field == "accuracy":
+                    expected_accuracy = self._accuracy_percent_cell(
+                        expected_value
+                    )
+                    actual_accuracy = self._accuracy_percent_cell(
+                        actual_value
+                    )
+                    matches = (
+                        expected_accuracy is not None
+                        and actual_accuracy is not None
+                        and actual_accuracy == expected_accuracy
+                    )
+                elif field in numeric_fields:
+                    expected_number = self._decimal_cell(
+                        expected_value
+                    )
+                    actual_number = self._decimal_cell(
+                        actual_value
+                    )
+                    matches = (
+                        expected_number is not None
+                        and actual_number is not None
+                        and actual_number == expected_number
+                    )
+                else:
+                    matches = actual_value == expected_value
+
+                if not matches:
+                    return (
+                        f"第 {row_index} 行、第 {column_index} 列 "
+                        f"({field}) 不一致："
+                        f"expected={expected_value!r}, "
+                        f"actual={actual_value!r}"
+                    )
+
+        return None
 
     # ============================================================
     # Upload

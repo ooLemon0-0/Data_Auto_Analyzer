@@ -8,7 +8,7 @@
 >
 > **Windows → EasyConnect → 镔鑫钢铁铸坯号识别系统 → 当天数据索引 → 抽样 → 人工判定。**
 >
-> **轻推 / WPS 会话保持与自动上传当前暂停开发，不属于本版本验收目标。除非用户明确要求下一版本继续，否则不要修改或依赖轻推 Sink。**
+> **轻推 / WPS Sink 按项目配置：每个项目必须显式声明目标文档链接和工作表子标签，上传失败不得影响采集与审核。**
 
 ---
 
@@ -29,9 +29,7 @@ README.md
 ↓
 分析 HTML 中的登录 / 日期 / 表格 / 分页 / 图片结构
 ↓
-新增 app/projects/<project>/source.py
-↓
-在 app/core/registry.py 注册 source type
+新增 app/projects/<project>/ 下的 Source / Diagnostics / Sink 插件
 ↓
 在 config/config.example.json 增加项目示例
 ↓
@@ -167,19 +165,33 @@ flowchart TD
 - 镔鑫网站用户名密码自动登录；
 - Windows 本机 Chrome。
 
-## 3.2 当前暂停能力
+## 3.2 轻推 / WPS 自动上传
 
 ### 轻推 / WPS 自动上传
 
-当前存在二维码 / 手机验证 / OAuth / WPS 编辑器会话等不稳定问题。
-
-本版本建议：
+轻推是可选的项目级 DataSink。启用项目必须同时配置文档链接和工作表子标签：
 
 ```json
 "sink": {
-  "enabled": false
+  "type": "binxin_73_84_qingtui",
+  "enabled": true,
+  "document_url": "https://web.qingtui.com/drive/preview/...",
+  "selectors": {
+    "sheet_name": "73-84",
+    "create_sheet_if_missing": true,
+    "sheet_add_button": ".sheets-add-btn-wrapper button",
+    "sheet_rename_input": ".sheet-name-input"
+  }
 }
 ```
+
+配置语义：
+
+- `document_url` 相同：写入同一个轻推/WPS 表格文档；
+- `sheet_name` 不同：写入该文档内不同的子标签；
+- `browser.user_data_dir` 相同：复用同一轻推登录会话；
+- `create_sheet_if_missing: true` 时，找不到子标签会自动创建并重命名；
+- WPS/Excel 标签名不能包含 `/`，机位组合使用 `73-84` 这类名称。
 
 审核完成后的统计已经存在 SQLite 中，可以通过 `/api/review/state` 得到：
 
@@ -191,8 +203,6 @@ valid_count
 accuracy
 complete
 ```
-
-CSV / JSON / 轻推自动上传可以在下一版本单独完善。
 
 **Sink 失败不能影响 Source 拉取和 Review Core。**
 
@@ -216,15 +226,29 @@ data-review-platform/
 │   │   └── base.py                # DataSource 抽象接口
 │   │
 │   ├── sinks/
-│   │   └── base.py                # DataSink 抽象接口
+│   │   ├── base.py                # DataSink 抽象接口
+│   │   └── qingtui_document.py    # 通用轻推/WPS 技术连接器
 │   │
 │   ├── services/
 │   │   └── review_service.py      # 抽样 / 补抽 / 状态 / 统计核心
 │   │
+│   ├── diagnostics/               # 通用诊断接口、流程和注册表
+│   │   ├── parser.py              # LogParser 接口
+│   │   ├── resolver.py            # fallback 策略接口
+│   │   └── renderer.py            # 前端渲染 Payload 接口
+│   │
 │   ├── projects/
-│   │   └── binxin/
-│   │       ├── source.py          # 镔鑫 Source
-│   │       └── sink.py            # 实验性轻推 Sink，当前非主流程
+│   │   ├── binxin_73_84/          # 73/84 完整独立项目插件
+│   │   │   ├── source.py
+│   │   │   ├── sink.py
+│   │   │   └── diagnostics/
+│   │   │       ├── parser.py
+│   │   │       ├── resolver.py
+│   │   │       └── renderer.py
+│   │   └── binxin_72_79/          # 72/79 独立项目插件
+│   │       ├── source.py
+│   │       ├── sink.py
+│   │       └── diagnostics/
 │   │
 │   └── static/
 │       ├── index.html
@@ -743,10 +767,11 @@ http://172.30.31.73:3000/
 等待内网恢复
 ```
 
-项目特有逻辑全部留在：
+项目特有逻辑分别留在：
 
 ```text
-app/projects/binxin/source.py
+app/projects/binxin_73_84/source.py
+app/projects/binxin_72_79/source.py
 ```
 
 ## 13.3 镔鑫网站登录
@@ -761,14 +786,7 @@ app/projects/binxin/source.py
 }
 ```
 
-优先使用环境变量：
-
-```powershell
-$env:BINXIN_USERNAME="..."
-$env:BINXIN_PASSWORD="..."
-```
-
-真实密码不要提交 Git。
+用户名和密码直接配置在未纳入 Git 的 `config/config.json` 中。真实密码不要提交 Git。
 
 ## 13.4 日期
 
@@ -1050,7 +1068,13 @@ API 地址
 ```text
 app/projects/ruifeng/
 ├── __init__.py
-└── source.py
+├── source.py
+├── sink.py
+└── diagnostics/
+    ├── __init__.py
+    ├── parser.py
+    ├── resolver.py
+    └── renderer.py
 ```
 
 ---
@@ -1166,9 +1190,7 @@ def build_source(project: dict):
     },
     "auth": {
       "username": "",
-      "password": "",
-      "username_env": "RUIFENG_USERNAME",
-      "password_env": "RUIFENG_PASSWORD"
+      "password": ""
     },
     "selectors": {}
   },
@@ -1187,8 +1209,6 @@ def build_source(project: dict):
 ```text
 config/config.json
 ```
-
-或环境变量。
 
 ---
 
@@ -1260,8 +1280,9 @@ URL 类型:
 
 【计划修改】
 1. app/projects/xxx/source.py
-2. app/core/registry.py
-3. config/config.example.json
+2. app/projects/xxx/diagnostics/
+3. app/projects/plugins.py
+4. config/config.example.json
 
 【默认不修改】
 review_service.py
@@ -1286,9 +1307,15 @@ QingTui/WPS Sink
 
 ```text
 app/projects/<project>/source.py
-app/core/registry.py
+app/projects/<project>/sink.py
+app/projects/<project>/diagnostics/parser.py
+app/projects/<project>/diagnostics/resolver.py
+app/projects/<project>/diagnostics/renderer.py
+app/projects/plugins.py
 config/config.example.json
 ```
+
+即使两个项目当前页面或日志格式相同，也必须在 `app/projects/plugins.py` 注册不同的 `source.type`、`parser.type`、`resolver.type`、`renderer.type` 和 `sink.type`。VPN、网站登录、DOM 解析、日志协议、fallback 和渲染方法必须完整放在各自项目目录，禁止共享业务模板，也禁止通过 `project_id` 在通用 Service 中分支。只有 SSH、Playwright 基础设施、轻推客户端等无业务语义的技术连接器可以复用。通用 registry 只保存 `type → factory` 映射，不导入或判断具体项目类型。
 
 ## Rule 3：业务 selector 不进入核心
 
@@ -1343,12 +1370,7 @@ runtime/browser/<project>
 
 ## Rule 10：凭据不硬编码
 
-使用：
-
-```text
-config.json
-或环境变量
-```
+凭据只写入未纳入 Git 的 `config/config.json`。
 
 ## Rule 11：不要删除 runtime 历史数据
 
@@ -1387,9 +1409,9 @@ prepare
 统计
 ```
 
-## Rule 14：轻推 / WPS 当前冻结
+## Rule 14：轻推 / WPS 路由属于项目配置
 
-除非用户明确开启下一版本，否则不要继续处理会话保存和自动上传。
+每个启用轻推的项目必须自带完整 `sink` 配置。不得根据项目名在 Sink 代码中硬编码文档或子标签；共享同一文档的项目使用相同 `document_url` 和不同 `selectors.sheet_name`。
 
 ---
 
@@ -1499,7 +1521,7 @@ python -m venv .venv
 .\.venv\Scripts\activate
 
 python -m pip install -U pip
-python -m pip install -r requirements.txt
+python -m pip install .
 
 Copy-Item config\config.example.json config\config.json
 
@@ -1523,6 +1545,7 @@ http://127.0.0.1:8100
 ```text
 README.md
 .gitignore
+pyproject.toml
 requirements.txt
 run.py
 app/
@@ -1589,12 +1612,11 @@ AI 可以新增 Source
 - CSV / XLSX 标准结果导出；
 - 日报 / 周报。
 
-## P3：DataSink
+## P3：扩展 DataSink
 
-等多个 Source 稳定后再处理：
+轻推/WPS 已作为项目级 Sink 接入，未来还可增加：
 
 ```text
-轻推 / WPS
 API
 数据库
 Excel
@@ -1617,6 +1639,8 @@ Excel
 >
 > **新增项目优先增加插件和配置，不修改核心。**
 
+统一层只允许理解稳定契约，不允许理解 EasyConnect、网页 selector、机位 IP、`ocr_empty`、Surface/DET/CLS 或轻推标签名。项目诊断数据放在 `DiagnosticEvent.details`，由该项目 Parser 写入、Resolver 判断、Renderer 转换成统一的 `image_width / image_height / overlays` 后交给前端。
+
 如果下一次 AI 只有这份 README 和一个新的网页 HTML，它应当先从 HTML 识别登录、日期、表格、分页和图片结构，然后按照第 16～18 节新增 DataSource，并复用现有审核系统，而不是重新设计整个项目。
 
 ---
@@ -1625,7 +1649,7 @@ Excel
 
 审核页新增“日志诊断”按钮。它按当前条目的项目、采集时间、识别结果、图片名和机位，在现场日志时间窗口中匹配 OCR 事件；诊断仅临时展示，不写入审核数据库，也不会改变 `correct / incorrect / invalid`。
 
-通用能力位于 `app/diagnostics/`，项目日志协议位于 `app/projects/<project>/diagnostics/`。新增项目只需实现并注册新的 `LogParser`，再增加项目 `diagnostics` 配置，无需修改诊断 service。
+通用能力位于 `app/diagnostics/`，只负责读取日志、调用接口和返回统一 Payload。每个项目在 `app/projects/<project>/diagnostics/` 内分别实现并注册 `LogParser`、`DiagnosticResolver` 和 `DiagnosticRenderer`：Parser 解释项目日志，Resolver 决定是否查询备用来源，Renderer 生成前端 overlays。通用诊断 Service 不得包含任何项目字段或 fallback 条件。
 
 ## 24.1 镔鑫 SSH 密码
 
@@ -1639,6 +1663,8 @@ Excel
 ```
 
 日志诊断 SSH 凭据只从对应机位的 `auth.password` 读取。`config.example.json` 中必须保持密码为空。`diagnostics.stations` 支持为 72、73、74 等机位分别配置主机、账号、密码、日志路径和时间窗口。
+
+机位还可以按需配置 `fallbacks`。未配置时保持单日志源行为；配置 `when: "ocr_empty"` 后，仅当主日志已经匹配到事件、但该事件的 OCR 文本为空时，才会按列表顺序到备用日志源用相同时间窗再次匹配。前一个备用源未匹配时才会连接下一个，各主机首次实际查询时才分别建立缓存。备用项默认继承当前机位的 `log` 和 `parser`，因此日志路径和协议相同时只需填写备用 `source`。每套独立业务网站必须建立独立项目，不应把它的机器追加到已有项目。当前示例中，`binxin_billet` 使用 73→84，`binxin_billet_72` 使用 72→79；密码均在本地 `config/config.json` 手动填写。
 
 ## 24.2 启动与页面测试
 

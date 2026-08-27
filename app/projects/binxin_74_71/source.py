@@ -18,7 +18,7 @@ from app.core.models import SourceItem
 from app.sources.base import DataSource
 
 
-class BinxinHistorySource(DataSource):
+class Binxin7471HistorySource(DataSource):
     """EasyConnect -> 镔鑫 history -> 当天记录元数据 -> 延迟缓存图片。"""
 
     def __init__(self, project_config: dict):
@@ -93,11 +93,6 @@ class BinxinHistorySource(DataSource):
     # ------------------------------------------------------------------
     def _credential(self, key: str) -> str:
         auth = self.source.get("auth", {})
-        env_name = str(auth.get(f"{key}_env", "")).strip()
-        if env_name:
-            value = os.environ.get(env_name, "").strip()
-            if value:
-                return value
         return str(auth.get(key, "")).strip()
 
     def _is_login_page(self, page) -> bool:
@@ -131,7 +126,7 @@ class BinxinHistorySource(DataSource):
         if not username or not password:
             raise RuntimeError(
                 "镔鑫网站需要登录，但 source.auth.username/password 未配置。"
-                "可直接填写 config.json，或通过 username_env/password_env 指定环境变量。"
+                "请直接填写 config.json。"
             )
 
         selectors = auth.get("selectors", {})
@@ -650,3 +645,5 @@ class BinxinHistorySource(DataSource):
                 ) from browser_error
             finally:
                 context.close()
+
+

@@ -33,12 +33,19 @@ class AppConfig(BaseModel):
     server: ServerConfig = ServerConfig()
     storage: StorageConfig = StorageConfig()
     projects: list[ProjectConfig] = Field(default_factory=list)
+    remote_connections: list[dict[str, Any]] = Field(default_factory=list)
 
     def project(self, project_id: str) -> ProjectConfig:
         for project in self.projects:
             if project.id == project_id:
                 return project
         raise KeyError(f"Unknown project: {project_id}")
+
+    def remote_connection(self, connection_id: str) -> dict[str, Any]:
+        for connection in self.remote_connections:
+            if connection.get("id") == connection_id:
+                return connection
+        raise KeyError(f"Unknown remote connection: {connection_id}")
 
 
 def _config_path() -> Path:

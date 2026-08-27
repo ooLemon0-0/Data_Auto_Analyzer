@@ -7,18 +7,20 @@ from pathlib import Path
 from typing import Any
 
 from app.diagnostics.models import (
-    BoxXYXY, CLSBoxDiagnostic, CLSGlobalDiagnostic, CoordinateSpace,
-    DeskewBoxDiagnostic, DeskewDiagnostic, DetBoxDiagnostic, DiagnosticEvent,
-    DiagnosticQuery, OCRDiagnostic, OCRStringDiagnostic, Point, Polygon,
-    SurfaceDiagnostic,
+    BoxXYXY, DiagnosticEvent, DiagnosticQuery, Point, Polygon,
 )
 from app.diagnostics.parser import LogParser
+from app.projects.binxin_74_71.diagnostics.models import (
+    BinxinDiagnosticData, CLSBoxDiagnostic, CLSGlobalDiagnostic, CoordinateSpace,
+    DeskewBoxDiagnostic, DeskewDiagnostic, DetBoxDiagnostic, OCRDiagnostic,
+    OCRStringDiagnostic, SurfaceDiagnostic,
+)
 
 
-class BinxinLogParser(LogParser):
+class Binxin7471LogParser(LogParser):
     """Tolerant parser for the Binxin OCR protocol markers."""
 
-    parser_type = "binxin_ocr"
+    parser_type = "binxin_74_71_ocr"
     START = "取到图片开始一次推理"
     END = "本次取图推理结束"
     TS = re.compile(r"(?P<ts>\d{4}[-/]\d{2}[-/]\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d{1,6})?)")
@@ -49,7 +51,8 @@ class BinxinLogParser(LogParser):
             if delta <= max_delta:
                 score += time_weight * (1 - delta / max(max_delta, 0.001))
         expected = self._normalise(query.expected_result)
-        actual = self._normalise(event.ocr.joined_text if event.ocr else None)
+        details = event.details if isinstance(event.details, BinxinDiagnosticData) else None
+        actual = self._normalise(details.ocr.joined_text if details and details.ocr else None)
         if expected and actual and expected == actual:
             score += result_weight
         if query.image_name and event.image_name and Path(query.image_name).name == Path(event.image_name).name:
@@ -87,15 +90,16 @@ class BinxinLogParser(LogParser):
             event_id=f"binxin-{index}", start_time=timestamps[0] if timestamps else None,
             trigger_time=self._marker_time(block, self.START),
             finish_time=self._marker_time(block, self.END) or (timestamps[-1] if timestamps else None),
-            raw_log=block,
+            raw_log=block, details=BinxinDiagnosticData(),
         )
-        event.surface = self._parse_surface(block)
-        event.det_boxes = self._parse_det(block, event.surface)
-        event.deskew = self._parse_deskew(block)
-        event.cls_boxes, event.cls_global = self._parse_cls(block)
-        event.ocr = self._parse_ocr(block, event.warnings)
-        if event.ocr:
-            event.image_url = event.ocr.full_picture_url
+        details = event.details
+        details.surface = self._parse_surface(block)
+        details.det_boxes = self._parse_det(block, details.surface)
+        details.deskew = self._parse_deskew(block)
+        details.cls_boxes, details.cls_global = self._parse_cls(block)
+        details.ocr = self._parse_ocr(block, event.warnings)
+        if details.ocr:
+            event.image_url = details.ocr.full_picture_url
             if event.image_url:
                 event.image_name = Path(event.image_url.split("?", 1)[0]).name
         return event
@@ -315,3 +319,5 @@ class BinxinLogParser(LogParser):
         if value is None: return None
         if isinstance(value, bool): return value
         return str(value).strip().lower() in {"1", "true", "yes"}
+
+

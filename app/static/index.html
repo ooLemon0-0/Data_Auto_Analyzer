@@ -27,6 +27,7 @@
       <div class="stat"><span>错误</span><strong id="incorrectStat">0</strong></div>
       <div class="stat"><span>无效</span><strong id="invalidStat">0</strong></div>
       <div class="stat"><span>准确率</span><strong id="accuracyStat">—</strong></div>
+      <button id="manualDiagnosticBtn" class="ghost log-search-btn" type="button">查日志</button>
       <button id="sinkAuthBtn" class="ghost">轻推登录 / 验证</button>
       <button id="uploadBtn" class="ghost" disabled>审核完成并上传</button>
     </section>
@@ -71,6 +72,17 @@
   <div id="diagnosticModal" class="diagnostic-modal" hidden>
     <div class="diagnostic-dialog" role="dialog" aria-modal="true" aria-labelledby="diagnosticTitle">
       <header><h2 id="diagnosticTitle">日志诊断</h2><button id="diagnosticClose" aria-label="关闭">×</button></header>
+      <form id="diagnosticSearchForm" class="diagnostic-search-form" hidden>
+        <label>开始时间<input id="diagnosticStartTime" type="datetime-local" step="1" required /></label>
+        <label>结束时间<input id="diagnosticEndTime" type="datetime-local" step="1" required /></label>
+        <label>识别名字<input id="diagnosticExpectedResult" type="text" placeholder="例如 3MSC9968" /></label>
+        <label>图片名字<input id="diagnosticImageName" type="text" placeholder="支持输入部分文件名" /></label>
+        <button id="diagnosticSearchBtn" class="primary" type="submit">查询</button>
+      </form>
+      <div id="diagnosticSearchResults" class="diagnostic-search-results" hidden>
+        <div id="diagnosticSearchSummary" class="diagnostic-search-summary"></div>
+        <div id="diagnosticResultList" class="diagnostic-result-list"></div>
+      </div>
       <div id="diagnosticLoading" class="diagnostic-loading">
         <span class="diagnostic-spinner" aria-hidden="true"></span>
         <strong id="diagnosticLoadingTitle">正在读取现场日志并匹配事件…</strong>
@@ -78,8 +90,9 @@
       </div>
       <div id="diagnosticError" class="diagnostic-error" hidden></div>
       <div id="diagnosticContent" hidden>
+        <div id="diagnosticMatchMeta" class="diagnostic-match-meta"></div>
         <div class="diagnostic-grid">
-          <div class="diagnostic-visual"><div id="diagnosticImageWrap" class="diagnostic-image-wrap">
+          <div id="diagnosticVisual" class="diagnostic-visual"><div id="diagnosticImageWrap" class="diagnostic-image-wrap">
             <img id="diagnosticImage" alt="诊断原图" /><svg id="diagnosticOverlay" preserveAspectRatio="none"></svg>
           </div></div>
         </div>
