@@ -23,6 +23,74 @@ let rotation = 0;
 let renderedItemId = null;
 let hasLoadedDiagnostics = false;
 let diagnosticSearchMatches = [];
+let projects = [];
+
+function selectedProject() {
+  return projects.find(project => project.id === projectSelect.value) || null;
+}
+
+function projectHasDiagnostics() {
+  return Boolean(selectedProject()?.diagnostics_enabled);
+}
+
+function projectHasSink() {
+  return Boolean(selectedProject()?.sink_enabled);
+}
+
+function wait(milliseconds) {
+  return new Promise(resolve => setTimeout(resolve, milliseconds));
+}
+
+function remotePhaseLabel(phase) {
+  return {
+    starting_vpn: "启动 aTrust…",
+    waiting_vpn: "等待 aTrust 登录…",
+    launching_rdp: "启动远程桌面…",
+    waiting_proxy: "等待 1080 代理…",
+  }[phase] || "准备远程连接…";
+}
+
+async function ensureProjectRemoteAccess(project) {
+  const connectionId = project?.remote_connection_id;
+  if (!connectionId) return;
+
+  let status = await api("/api/remote-access/launch", {
+    method: "POST",
+    body: JSON.stringify({connection_id: connectionId}),
+  });
+  const deadline = Date.now() + 6 * 60 * 1000;
+  let lastPhase = "";
+
+  while (Date.now() < deadline) {
+    if (status.phase === "failed") {
+      throw new Error(status.message || "远程连接启动失败");
+    }
+    if (
+      status.phase === "ready"
+      || (status.phase === "rdp_started" && !status.proxy_target)
+    ) {
+      return;
+    }
+    prepareBtn.textContent = remotePhaseLabel(status.phase);
+    if (status.phase !== lastPhase && status.message) {
+      notify(status.message);
+      lastPhase = status.phase;
+    }
+    await wait(1500);
+    status = await api(`/api/remote-access/${encodeURIComponent(connectionId)}/status`);
+  }
+  throw new Error("等待 aTrust、远程桌面和 SocksOverRDP 就绪超时");
+}
+
+function applyProjectCapabilities() {
+  const diagnosticsEnabled = projectHasDiagnostics();
+  const sinkEnabled = projectHasSink();
+  manualDiagnosticBtn.hidden = !diagnosticsEnabled;
+  diagnosticBtn.hidden = !diagnosticsEnabled;
+  diagnosticBtn.disabled = !diagnosticsEnabled || !state?.current;
+  sinkAuthBtn.hidden = !sinkEnabled;
+  uploadBtn.hidden = !sinkEnabled;
+}
 
 function todayLocal() {
   const d = new Date();
@@ -104,7 +172,7 @@ function render(s) {
   //   审核尚未完成
   // ============================================================
 
-  uploadBtn.disabled = !s.complete;
+  uploadBtn.disabled = !s.complete || !projectHasSink();
 
   if (s.uploaded) {
     uploadBtn.textContent = "重新上传";
@@ -147,7 +215,7 @@ function render(s) {
   }
 
   rotateBtn.disabled = false;
-  diagnosticBtn.disabled = false;
+  diagnosticBtn.disabled = !projectHasDiagnostics();
 
   emptyState.style.display =
     "none";
@@ -189,20 +257,24 @@ function render(s) {
 }
 
 async function loadProjects() {
-  const projects = await api("/api/projects");
+  projects = await api("/api/projects");
   projectSelect.innerHTML = projects.map(p => `<option value="${p.id}" data-target="${p.daily_target}">${p.name}</option>`).join("");
   if (projects.length) targetInput.value = projects[0].daily_target;
+  applyProjectCapabilities();
 }
 
 projectSelect.addEventListener("change", () => {
   const option = projectSelect.selectedOptions[0];
   if (option) targetInput.value = option.dataset.target || 50;
+  applyProjectCapabilities();
 });
 
 prepareBtn.addEventListener("click", async () => {
   prepareBtn.disabled = true;
-  prepareBtn.textContent = "拉取中…";
   try {
+    const project = selectedProject();
+    await ensureProjectRemoteAccess(project);
+    prepareBtn.textContent = "拉取中…";
     const data = await api("/api/review/prepare", {
       method: "POST",
       body: JSON.stringify({

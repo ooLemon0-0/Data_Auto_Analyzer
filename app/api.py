@@ -74,7 +74,14 @@ def index():
 @app.get("/api/projects")
 def projects():
     return [
-        {"id": p.id, "name": p.name, "daily_target": p.daily_target}
+        {
+            "id": p.id,
+            "name": p.name,
+            "daily_target": p.daily_target,
+            "diagnostics_enabled": bool(p.diagnostics.get("enabled", False)),
+            "sink_enabled": bool(p.sink.get("enabled", False)),
+            "remote_connection_id": p.source.get("remote_connection_id"),
+        }
         for p in settings.projects
         if p.enabled
     ]

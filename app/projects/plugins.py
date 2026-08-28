@@ -9,6 +9,7 @@ def register_data_plugins() -> None:
     from app.projects.binxin_73_84.source import Binxin7384HistorySource
     from app.projects.binxin_74_71.sink import Binxin7471QingTuiSink
     from app.projects.binxin_74_71.source import Binxin7471HistorySource
+    from app.projects.ruifeng.source import RuifengHistorySource
 
     register_source("binxin_73_84_history", Binxin7384HistorySource)
     register_sink("binxin_73_84_qingtui", Binxin7384QingTuiSink)
@@ -16,6 +17,7 @@ def register_data_plugins() -> None:
     register_sink("binxin_72_79_qingtui", Binxin7279QingTuiSink)
     register_source("binxin_74_71_history", Binxin7471HistorySource)
     register_sink("binxin_74_71_qingtui", Binxin7471QingTuiSink)
+    register_source("ruifeng_history", RuifengHistorySource)
 
 
 def register_diagnostic_plugins() -> None:

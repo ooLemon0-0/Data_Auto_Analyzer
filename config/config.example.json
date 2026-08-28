@@ -29,6 +29,11 @@
         "password": "",
         "connect_timeout_seconds": 180,
         "executable_path": "C:\\Windows\\System32\\mstsc.exe"
+      },
+      "socks_proxy": {
+        "host": "127.0.0.1",
+        "port": 1080,
+        "connect_timeout_seconds": 180
       }
     }
   ],
@@ -600,6 +605,125 @@
           "paste_wait_ms": 800,
           "save_wait_ms": 2500
         }
+      }
+    },
+    {
+      "id": "ruifeng_trolley",
+      "name": "瑞丰台车识别",
+      "enabled": true,
+      "daily_target": 50,
+      "source": {
+        "type": "ruifeng_history",
+        "refresh_on_prepare": false,
+        "remote_connection_id": "atrust_remote_246",
+        "history_url": "http://192.100.100.150:3000/#/history",
+        "camera_groups": [
+          "渣跨1号废钢台车",
+          "渣跨2号废钢台车"
+        ],
+        "proxy": {
+          "enabled": true,
+          "server": "socks5://127.0.0.1:1080",
+          "requests_url": "socks5h://127.0.0.1:1080",
+          "healthcheck_url": "http://192.100.100.150:3000/",
+          "connect_timeout_seconds": 8
+        },
+        "browser": {
+          "channel": "chrome",
+          "headless": false,
+          "user_data_dir": "./runtime/browser/ruifeng_trolley",
+          "ignore_no_sandbox_arg": true
+        },
+        "auth": {
+          "username": "",
+          "password": "",
+          "allow_interactive_login": true,
+          "interactive_login_timeout_seconds": 300,
+          "login_timeout_ms": 30000,
+          "page_settle_timeout_ms": 10000,
+          "selectors": {
+            "username": "input[placeholder*=\"用户名\"], input[placeholder*=\"账号\"], input[type=\"text\"]",
+            "password": "input[type=\"password\"], input[placeholder*=\"密码\"]",
+            "login_button": "button:has-text(\"登录\"), input[type=\"submit\"]"
+          }
+        },
+        "selectors": {
+          "start_date": "input[placeholder*=\"开始时间\"], input[placeholder*=\"开始日期\"]",
+          "end_date": "input[placeholder*=\"结束时间\"], input[placeholder*=\"结束日期\"]",
+          "camera_group": "input[placeholder*=\"相机分组\"], input[placeholder*=\"相机组\"], .el-form-item:has-text(\"相机分组\") .el-select, .ant-form-item:has-text(\"相机分组\") .ant-select-selector",
+          "search_button": "button:has-text(\"查询\"), button:has-text(\"搜索\")"
+        }
+      },
+      "diagnostics": {
+        "enabled": false
+      },
+      "cache": {
+        "type": "sqlite",
+        "path": "./runtime/review.sqlite3",
+        "result_export_dir": "./runtime/results/ruifeng_trolley"
+      },
+      "sink": {
+        "enabled": false
+      }
+    },
+    {
+      "id": "ruifeng_ladle",
+      "name": "瑞丰钢包识别",
+      "enabled": true,
+      "daily_target": 50,
+      "source": {
+        "type": "ruifeng_history",
+        "refresh_on_prepare": false,
+        "remote_connection_id": "atrust_remote_246",
+        "history_url": "http://192.100.100.150:3000/#/history",
+        "camera_groups": [
+          "转炉吊包位",
+          "钢水跨精炼2号台车",
+          "钢水跨精炼1号台车"
+        ],
+        "proxy": {
+          "enabled": true,
+          "server": "socks5://127.0.0.1:1080",
+          "requests_url": "socks5h://127.0.0.1:1080",
+          "healthcheck_url": "http://192.100.100.150:3000/",
+          "connect_timeout_seconds": 8
+        },
+        "browser": {
+          "channel": "chrome",
+          "headless": false,
+          "user_data_dir": "./runtime/browser/ruifeng_ladle",
+          "ignore_no_sandbox_arg": true
+        },
+        "auth": {
+          "username": "",
+          "password": "",
+          "allow_interactive_login": true,
+          "interactive_login_timeout_seconds": 300,
+          "login_timeout_ms": 30000,
+          "page_settle_timeout_ms": 10000,
+          "selectors": {
+            "username": "input[placeholder*=\"用户名\"], input[placeholder*=\"账号\"], input[type=\"text\"]",
+            "password": "input[type=\"password\"], input[placeholder*=\"密码\"]",
+            "login_button": "button:has-text(\"登录\"), input[type=\"submit\"]"
+          }
+        },
+        "selectors": {
+          "start_date": "input[placeholder*=\"开始时间\"], input[placeholder*=\"开始日期\"]",
+          "end_date": "input[placeholder*=\"结束时间\"], input[placeholder*=\"结束日期\"]",
+          "camera_group": "input[placeholder*=\"相机分组\"], input[placeholder*=\"相机组\"], .el-form-item:has-text(\"相机分组\") .el-select, .ant-form-item:has-text(\"相机分组\") .ant-select-selector",
+          "search_button": "button:has-text(\"查询\"), button:has-text(\"搜索\")"
+        }
+      },
+      "diagnostics": {
+        "enabled": false
+      },
+      "cache": {
+        "type": "sqlite",
+        "path": "./runtime/review.sqlite3",
+        "result_export_dir": "./runtime/results/ruifeng_ladle"
+      },
+      "sink": {
+        "enabled": false
       }
     }
   ]

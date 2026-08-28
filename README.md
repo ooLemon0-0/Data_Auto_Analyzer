@@ -212,6 +212,11 @@ complete
 
 ```text
 data-review-platform/
+├── dependencies/
+│   └── SocksOverRDP/              # 第三方 RDP SOCKS 转发工具（MIT）
+│       ├── SocksOverRDP-Plugin.dll
+│       ├── SocksOverRDP-Server.exe
+│       └── LICENSE
 │
 ├── app/
 │   ├── api.py                     # FastAPI 路由
@@ -271,6 +276,7 @@ data-review-platform/
 ├── README.md
 └── .gitignore
 ```
+
 
 ---
 

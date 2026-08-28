@@ -15,6 +15,7 @@ from app.projects.binxin_74_71.diagnostics.renderer import Binxin7471Renderer
 from app.projects.binxin_74_71.diagnostics.resolver import Binxin7471Resolver
 from app.projects.binxin_74_71.sink import Binxin7471QingTuiSink
 from app.projects.binxin_74_71.source import Binxin7471HistorySource
+from app.projects.ruifeng.source import RuifengHistorySource
 
 
 def _project(source_type: str, sink_type: str) -> dict:
@@ -34,6 +35,19 @@ def test_projects_resolve_to_distinct_source_and_sink_classes():
     assert isinstance(build_sink(p7279), Binxin7279QingTuiSink)
     assert isinstance(build_source(p7471), Binxin7471HistorySource)
     assert isinstance(build_sink(p7471), Binxin7471QingTuiSink)
+
+
+def test_ruifeng_source_is_registered_without_reusing_binxin_business_logic():
+    project = {
+        "source": {
+            "type": "ruifeng_history",
+            "camera_groups": ["渣跨1号废钢台车"],
+        },
+        "sink": {"enabled": False},
+    }
+    source = build_source(project)
+    assert isinstance(source, RuifengHistorySource)
+    assert not isinstance(source, Binxin7384HistorySource)
 
 
 def test_projects_resolve_to_distinct_diagnostic_components():

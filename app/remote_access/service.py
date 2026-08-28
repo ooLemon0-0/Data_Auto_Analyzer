@@ -39,6 +39,12 @@ class CREDENTIALW(ctypes.Structure):
 
 
 class RemoteAccessService:
+    ACTIVE_PHASES = {
+        "starting_vpn",
+        "waiting_vpn",
+        "launching_rdp",
+        "waiting_proxy",
+    }
     ATRUST_CANDIDATES = [
         r"C:\Program Files (x86)\Sangfor\aTrust\aTrustTray\aTrustTray.exe",
         r"C:\Program Files\Sangfor\aTrust\aTrustTray\aTrustTray.exe",
@@ -61,6 +67,9 @@ class RemoteAccessService:
         config = settings.remote_connection(connection_id)
         rdp = config.get("rdp", {})
         host, port = str(rdp.get("host", "")), int(rdp.get("port", 3389))
+        proxy = config.get("socks_proxy") or {}
+        proxy_host = str(proxy.get("host", "")).strip()
+        proxy_port = int(proxy.get("port", 1080))
         with self._lock:
             job = dict(self._jobs.get(connection_id, {}))
         return {
@@ -72,14 +81,33 @@ class RemoteAccessService:
             "updated_at": job.get("updated_at"),
             "rdp_target": f"{host}:{port}",
             "rdp_reachable": self._port_reachable(host, port, timeout=0.4),
+            "proxy_target": f"{proxy_host}:{proxy_port}" if proxy_host else None,
+            "proxy_reachable": (
+                self._port_reachable(proxy_host, proxy_port, timeout=0.2)
+                if proxy_host
+                else None
+            ),
         }
 
     def launch(self, connection_id: str) -> dict[str, Any]:
         config = settings.remote_connection(connection_id)
         self._validate(config)
+        proxy = config.get("socks_proxy") or {}
+        proxy_host = str(proxy.get("host", "")).strip()
+        proxy_port = int(proxy.get("port", 1080))
+        if proxy_host and self._port_reachable(proxy_host, proxy_port, timeout=0.2):
+            now = self._now()
+            with self._lock:
+                self._jobs[connection_id] = {
+                    "phase": "ready",
+                    "message": "SocksOverRDP 代理已就绪",
+                    "started_at": now,
+                    "updated_at": now,
+                }
+            return self.status(connection_id)
         with self._lock:
             current = self._jobs.get(connection_id, {})
-            if current.get("phase") in {"starting_vpn", "waiting_vpn", "launching_rdp"}:
+            if current.get("phase") in self.ACTIVE_PHASES:
                 return self.status(connection_id)
             started_at = self._now()
             self._jobs[connection_id] = {
@@ -108,18 +136,40 @@ class RemoteAccessService:
             host = str(rdp["host"])
             port = int(rdp.get("port", 3389))
             timeout = int(rdp.get("connect_timeout_seconds", 180))
-            self._wait_for_port(host, port, timeout)
+            self._wait_for_port(host, port, timeout, "aTrust 连通")
             self._set_status(
                 connection_id,
                 phase="launching_rdp",
                 message="VPN 已连通，正在启动 Windows 远程桌面",
             )
             self._launch_rdp(rdp)
-            self._set_status(
-                connection_id,
-                phase="rdp_started",
-                message="Windows 远程桌面已启动",
-            )
+            proxy = config.get("socks_proxy") or {}
+            proxy_host = str(proxy.get("host", "")).strip()
+            if proxy_host:
+                proxy_port = int(proxy.get("port", 1080))
+                proxy_timeout = int(proxy.get("connect_timeout_seconds", 180))
+                self._set_status(
+                    connection_id,
+                    phase="waiting_proxy",
+                    message="远程桌面已启动，正在等待 SocksOverRDP 代理",
+                )
+                self._wait_for_port(
+                    proxy_host,
+                    proxy_port,
+                    proxy_timeout,
+                    "SocksOverRDP 代理",
+                )
+                self._set_status(
+                    connection_id,
+                    phase="ready",
+                    message="aTrust、远程桌面和 SocksOverRDP 均已就绪",
+                )
+            else:
+                self._set_status(
+                    connection_id,
+                    phase="rdp_started",
+                    message="Windows 远程桌面已启动",
+                )
         except Exception as exc:
             self._set_status(connection_id, phase="failed", message=str(exc))
 
@@ -146,6 +196,17 @@ class RemoteAccessService:
             raise RemoteAccessError("RDP username 未配置")
         if not str(rdp.get("password", "")):
             raise RemoteAccessError("RDP password 未配置，请填写 config.json")
+        proxy = config.get("socks_proxy") or {}
+        if proxy:
+            if not str(proxy.get("host", "")).strip():
+                raise RemoteAccessError("socks_proxy.host 未配置")
+            try:
+                proxy_port = int(proxy.get("port", 1080))
+                proxy_timeout = int(proxy.get("connect_timeout_seconds", 180))
+            except (TypeError, ValueError) as exc:
+                raise RemoteAccessError("socks_proxy 端口或超时时间格式无效") from exc
+            if not 1 <= proxy_port <= 65535 or proxy_timeout < 1:
+                raise RemoteAccessError("socks_proxy 端口或超时时间格式无效")
 
     def _atrust_executable(self, vpn: dict[str, Any]) -> Path:
         configured = str(vpn.get("executable_path", "")).strip()
@@ -173,14 +234,20 @@ class RemoteAccessService:
         except OSError:
             return False
 
-    def _wait_for_port(self, host: str, port: int, timeout: int) -> None:
+    def _wait_for_port(
+        self,
+        host: str,
+        port: int,
+        timeout: int,
+        purpose: str = "aTrust 连通",
+    ) -> None:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if self._port_reachable(host, port):
                 return
             time.sleep(2)
         raise RemoteAccessError(
-            f"等待 aTrust 连通超时：{timeout} 秒内无法访问 {host}:{port}"
+            f"等待 {purpose}超时：{timeout} 秒内无法访问 {host}:{port}"
         )
 
     @staticmethod
