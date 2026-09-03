@@ -13,12 +13,29 @@ import requests
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
+try:
+    import socks as _pysocks
+except ImportError:  # Reported explicitly when a Ruifeng source is used.
+    _pysocks = None
+
 from app.core.models import SourceItem
 from app.sources.base import DataSource
 
 
 class RuifengHistorySource(DataSource):
     """Collect Ruifeng history records through the SocksOverRDP proxy."""
+
+    DEFAULT_LOGIN_USERNAME_SELECTOR = (
+        'form.el-form input.el-input__inner[placeholder="请输入用户名"]'
+    )
+    DEFAULT_LOGIN_PASSWORD_SELECTOR = (
+        'form.el-form input.el-input__inner[placeholder="请输入密码"]'
+    )
+    DEFAULT_LOGIN_BUTTON_SELECTOR = "form.el-form button.login-button"
+    DEFAULT_LOGIN_ERROR_SELECTOR = (
+        ".el-message--error:visible, .el-form-item__error:visible, "
+        ".el-notification__content:visible, .el-message-box__message:visible"
+    )
 
     DEFAULT_COLUMN_ALIASES = {
         "timestamp": ("识别时间", "采集时间", "拍摄时间", "创建时间", "时间"),
@@ -39,9 +56,11 @@ class RuifengHistorySource(DataSource):
         super().__init__(project_config)
         self.source = project_config["source"]
         self.camera_groups = tuple(
-            str(value).strip()
-            for value in self.source.get("camera_groups", [])
-            if str(value).strip()
+            dict.fromkeys(
+                str(value).strip()
+                for value in self.source.get("camera_groups", [])
+                if str(value).strip()
+            )
         )
         if not self.camera_groups:
             raise ValueError("瑞丰项目必须配置 source.camera_groups")
@@ -60,19 +79,12 @@ class RuifengHistorySource(DataSource):
             self._proxy_config().get("server", "socks5://127.0.0.1:1080")
         ).strip()
 
-    def _requests_proxy_url(self) -> str:
-        configured = str(self._proxy_config().get("requests_url", "")).strip()
-        if configured:
-            return configured
-        server = self._browser_proxy_server()
-        if server.startswith("socks5://"):
-            return "socks5h://" + server.removeprefix("socks5://")
-        return server
-
     def _requests_proxies(self) -> dict[str, str] | None:
         if not self._proxy_enabled():
             return None
-        proxy_url = self._requests_proxy_url()
+        proxy_url = self._browser_proxy_server()
+        if proxy_url.startswith("socks5://"):
+            proxy_url = "socks5h://" + proxy_url.removeprefix("socks5://")
         return {"http": proxy_url, "https": proxy_url}
 
     def _proxy_endpoint(self) -> tuple[str, int]:
@@ -81,7 +93,18 @@ class RuifengHistorySource(DataSource):
             raise RuntimeError("瑞丰 source.proxy.server 必须包含主机和端口")
         return parsed.hostname, parsed.port
 
+    def _ensure_local_socks_dependency(self) -> None:
+        if not self._proxy_enabled() or _pysocks is not None:
+            return
+        raise RuntimeError(
+            "审核平台本机缺少 Python 依赖 PySocks，无法通过 SOCKS5 访问瑞丰。"
+            "请在运行 run.py 的这台机器执行 "
+            "`python -m pip install -r requirements.txt` 后重启服务；"
+            "瑞丰目标机不需要 Python，也不要在目标机执行该命令。"
+        )
+
     def _ensure_route(self) -> None:
+        self._ensure_local_socks_dependency()
         timeout = float(self._proxy_config().get("connect_timeout_seconds", 5))
         if self._proxy_enabled():
             host, port = self._proxy_endpoint()
@@ -90,8 +113,9 @@ class RuifengHistorySource(DataSource):
                     pass
             except OSError as exc:
                 raise RuntimeError(
-                    f"瑞丰 SOCKS5 代理未就绪：{host}:{port}。"
-                    "请先保持目标服务器的 SocksOverRDP-Server 和远程桌面连接正常。"
+                    f"瑞丰远程通道已断开：本机 {host}:{port} 没有 SOCKS5 监听。"
+                    "请保持本机的 Windows 远程桌面窗口连接（可以最小化，但不要关闭），"
+                    "然后重试；首次部署时请在瑞丰目标机运行页面提供的安装命令。"
                 ) from exc
 
         healthcheck_url = str(
@@ -141,6 +165,21 @@ class RuifengHistorySource(DataSource):
             kwargs["ignore_default_args"] = ["--no-sandbox"]
         return playwright.chromium.launch_persistent_context(str(profile), **kwargs)
 
+    def _open_history_page(self, playwright):
+        context = self._launch_context(playwright)
+        try:
+            page = context.pages[0] if context.pages else context.new_page()
+            page.goto(
+                self.source["history_url"],
+                wait_until="domcontentloaded",
+                timeout=60000,
+            )
+            self._ensure_site_login(page)
+            return context, page
+        except Exception:
+            context.close()
+            raise
+
     @staticmethod
     def _first_visible(page, selector: str):
         locator = page.locator(selector)
@@ -160,7 +199,7 @@ class RuifengHistorySource(DataSource):
 
     def _is_login_page(self, page) -> bool:
         password_selector = self._auth_selector(
-            "password", 'input[type="password"], input[placeholder*="密码"]'
+            "password", self.DEFAULT_LOGIN_PASSWORD_SELECTOR
         )
         try:
             if self._first_visible(page, password_selector) is not None:
@@ -168,6 +207,36 @@ class RuifengHistorySource(DataSource):
         except Exception:
             pass
         return "/login" in page.url.lower()
+
+    def _login_error_text(self, page) -> str:
+        selector = self._auth_selector(
+            "login_error",
+            self.DEFAULT_LOGIN_ERROR_SELECTOR,
+        )
+        errors = page.locator(selector)
+        for index in range(errors.count()):
+            candidate = errors.nth(index)
+            try:
+                text = candidate.inner_text().strip()
+                if text and candidate.is_visible():
+                    return text
+            except Exception:
+                continue
+        return ""
+
+    def _wait_for_login_result(self, page, timeout_ms: int) -> None:
+        deadline = time.monotonic() + timeout_ms / 1000
+        while time.monotonic() < deadline:
+            if not self._is_login_page(page):
+                return
+            error_text = self._login_error_text(page)
+            if error_text:
+                raise RuntimeError(f"瑞丰网站登录失败：{error_text}")
+            page.wait_for_timeout(250)
+        error_text = self._login_error_text(page)
+        if error_text:
+            raise RuntimeError(f"瑞丰网站登录失败：{error_text}")
+        raise RuntimeError("瑞丰网站登录后页面未跳转，请检查账号、密码及登录接口。")
 
     def _ensure_site_login(self, page) -> None:
         auth = self.source.get("auth", {})
@@ -187,17 +256,7 @@ class RuifengHistorySource(DataSource):
                     auth.get("interactive_login_timeout_seconds", 300)
                 ) * 1000
                 page.bring_to_front()
-                try:
-                    page.wait_for_function(
-                        "() => !location.href.toLowerCase().includes('/login') "
-                        "&& ![...document.querySelectorAll('input[type=password]')]"
-                        ".some(element => element.offsetParent !== null)",
-                        timeout=timeout_ms,
-                    )
-                except PlaywrightTimeoutError as exc:
-                    raise RuntimeError(
-                        "等待瑞丰网站手动登录超时，请重新拉取后在打开的 Chrome 中完成登录。"
-                    ) from exc
+                self._wait_for_login_result(page, timeout_ms)
                 page.goto(
                     self.source["history_url"],
                     wait_until="domcontentloaded",
@@ -210,13 +269,13 @@ class RuifengHistorySource(DataSource):
 
         username_selector = self._auth_selector(
             "username",
-            'input[placeholder*="用户名"], input[placeholder*="账号"], input[type="text"]',
+            self.DEFAULT_LOGIN_USERNAME_SELECTOR,
         )
         password_selector = self._auth_selector(
-            "password", 'input[type="password"], input[placeholder*="密码"]'
+            "password", self.DEFAULT_LOGIN_PASSWORD_SELECTOR
         )
         button_selector = self._auth_selector(
-            "login_button", 'button:has-text("登录"), input[type="submit"]'
+            "login_button", self.DEFAULT_LOGIN_BUTTON_SELECTOR
         )
         timeout_ms = int(auth.get("login_timeout_ms", 30000))
 
@@ -226,18 +285,14 @@ class RuifengHistorySource(DataSource):
         if username_input is None or password_input is None or login_button is None:
             raise RuntimeError("无法在瑞丰登录页找到用户名、密码或登录按钮")
 
+        username_input.click()
+        username_input.fill("")
         username_input.fill(username)
+        password_input.click()
+        password_input.fill("")
         password_input.fill(password)
         login_button.click()
-        try:
-            page.wait_for_function(
-                "() => !location.href.toLowerCase().includes('/login') "
-                "&& ![...document.querySelectorAll('input[type=password]')]"
-                ".some(element => element.offsetParent !== null)",
-                timeout=timeout_ms,
-            )
-        except PlaywrightTimeoutError as exc:
-            raise RuntimeError("瑞丰网站登录失败或等待登录结果超时，请检查用户名/密码。") from exc
+        self._wait_for_login_result(page, timeout_ms)
         page.goto(self.source["history_url"], wait_until="domcontentloaded", timeout=60000)
 
     # ------------------------------------------------------------------
@@ -362,6 +417,12 @@ class RuifengHistorySource(DataSource):
                 return index
         return None
 
+    def _column_indexes(self, headers: list[str]) -> dict[str, int | None]:
+        return {
+            field: self._column_index(headers, field)
+            for field in ("timestamp", "recognition", "camera_group", "image")
+        }
+
     def _headers(self, page) -> list[str]:
         selector = self._selector(
             "table_headers",
@@ -393,7 +454,7 @@ class RuifengHistorySource(DataSource):
         self,
         page,
         row,
-        headers: list[str],
+        column_indexes: dict[str, int | None],
         camera_group: str,
         page_no: int,
         row_no: int,
@@ -402,10 +463,10 @@ class RuifengHistorySource(DataSource):
         if not cells.count():
             return None
 
-        timestamp_cell = self._cell(cells, self._column_index(headers, "timestamp"))
-        recognition_cell = self._cell(cells, self._column_index(headers, "recognition"))
-        group_cell = self._cell(cells, self._column_index(headers, "camera_group"))
-        image_cell = self._cell(cells, self._column_index(headers, "image"))
+        timestamp_cell = self._cell(cells, column_indexes["timestamp"])
+        recognition_cell = self._cell(cells, column_indexes["recognition"])
+        group_cell = self._cell(cells, column_indexes["camera_group"])
+        image_cell = self._cell(cells, column_indexes["image"])
 
         image_src = self._image_src(image_cell)
         if not image_src:
@@ -457,6 +518,7 @@ class RuifengHistorySource(DataSource):
         self, page, camera_group: str, page_no: int
     ) -> list[SourceItem]:
         headers = self._headers(page)
+        column_indexes = self._column_indexes(headers)
         rows = page.locator(self._row_selector())
         result: list[SourceItem] = []
         for index in range(rows.count()):
@@ -467,7 +529,7 @@ class RuifengHistorySource(DataSource):
             except Exception:
                 pass
             item = self._row_to_item(
-                page, row, headers, camera_group, page_no, index + 1
+                page, row, column_indexes, camera_group, page_no, index + 1
             )
             if item:
                 result.append(item)
@@ -563,24 +625,17 @@ class RuifengHistorySource(DataSource):
     def fetch_day(self, business_date: date) -> list[SourceItem]:
         self._ensure_route()
         with sync_playwright() as playwright:
-            context = self._launch_context(playwright)
+            context, page = self._open_history_page(playwright)
             try:
-                page = context.pages[0] if context.pages else context.new_page()
-                page.goto(self.source["history_url"], wait_until="domcontentloaded", timeout=60000)
-                self._ensure_site_login(page)
                 ready_selector = self._selector("history_ready", "body")
                 page.locator(ready_selector).first.wait_for(state="visible", timeout=30000)
                 start_text, end_text = self._set_day_filter(page, business_date)
 
                 result: list[SourceItem] = []
-                seen: set[str] = set()
                 for camera_group in self.camera_groups:
                     self._select_camera_group(page, camera_group)
                     self._submit_filter(page)
                     for item in self._scrape_all_pages(page, camera_group):
-                        if item.source_key in seen:
-                            continue
-                        seen.add(item.source_key)
                         item.metadata["filter_start"] = start_text
                         item.metadata["filter_end"] = end_text
                         result.append(item)
@@ -664,11 +719,8 @@ class RuifengHistorySource(DataSource):
             request_error = exc
 
         with sync_playwright() as playwright:
-            context = self._launch_context(playwright)
+            context, _page = self._open_history_page(playwright)
             try:
-                page = context.pages[0] if context.pages else context.new_page()
-                page.goto(self.source["history_url"], wait_until="domcontentloaded", timeout=60000)
-                self._ensure_site_login(page)
                 response = context.request.get(image_url, headers=headers, timeout=30000)
                 if not response.ok:
                     raise RuntimeError(f"HTTP {response.status}: {response.status_text}")

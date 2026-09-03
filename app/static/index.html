@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>数据抽样审核</title>
-  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/style.css?v=20260829-ruifeng-login-service-1" />
 </head>
 <body>
   <main class="shell">
@@ -69,6 +69,37 @@
 
     <div id="toast" class="toast"></div>
   </main>
+  <div id="remoteSetupModal" class="remote-setup-modal" hidden>
+    <div class="remote-setup-dialog" role="dialog" aria-modal="true" aria-labelledby="remoteSetupTitle">
+      <header>
+        <div>
+          <div class="eyebrow">REMOTE SETUP</div>
+          <h2 id="remoteSetupTitle">瑞丰现场首次部署</h2>
+        </div>
+        <button id="remoteSetupClose" type="button" aria-label="关闭">×</button>
+      </header>
+      <div class="remote-setup-content">
+        <p id="remoteSetupMessage"></p>
+        <div id="remoteSetupRoute" class="remote-setup-route"></div>
+        <div id="remoteSetupInstructions">
+          <ol class="remote-setup-steps">
+            <li>保持当前 Windows 远程桌面窗口连接；可以最小化，但不要关闭或注销。</li>
+            <li>在远程桌面中的瑞丰目标机上，以管理员身份打开 CMD。</li>
+            <li>点击下方“复制命令”，粘贴到目标机 CMD 后按 Enter。</li>
+            <li>看到 <code>SocksOverRDP remote bootstrap is installed and running.</code> 后返回本页面，系统会自动继续。</li>
+          </ol>
+          <div class="remote-setup-warning">不要在运行本审核平台的本机 CMD 中执行；命令应粘贴到远程桌面里面的目标机。</div>
+          <div class="remote-setup-command-label">复制到瑞丰目标机管理员 CMD：</div>
+          <pre id="remoteSetupCommand"></pre>
+        </div>
+        <div class="remote-setup-actions">
+          <button id="remoteSetupCopy" class="primary" type="button">复制命令（到远程桌面运行）</button>
+          <button id="remoteSetupDismiss" class="ghost" type="button">我已运行，继续检测</button>
+        </div>
+        <small>这不是日常操作；安装后由登录、RDP 重连任务和每分钟看门狗自动保持运行。</small>
+      </div>
+    </div>
+  </div>
   <div id="diagnosticModal" class="diagnostic-modal" hidden>
     <div class="diagnostic-dialog" role="dialog" aria-modal="true" aria-labelledby="diagnosticTitle">
       <header><h2 id="diagnosticTitle">日志诊断</h2><button id="diagnosticClose" aria-label="关闭">×</button></header>
@@ -100,6 +131,6 @@
       </div>
     </div>
   </div>
-<script src="/static/app.js"></script>
+<script src="/static/app.js?v=20260829-ruifeng-login-service-1"></script>
 </body>
 </html>

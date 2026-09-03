@@ -212,11 +212,11 @@ complete
 
 ```text
 data-review-platform/
-├── dependencies/
-│   └── SocksOverRDP/              # 第三方 RDP SOCKS 转发工具（MIT）
-│       ├── SocksOverRDP-Plugin.dll
-│       ├── SocksOverRDP-Server.exe
-│       └── LICENSE
+├── dependencies/                  # SocksOverRDP 本地插件、远端服务和自举脚本
+│   ├── SocksOverRDP-Plugin.dll
+│   ├── SocksOverRDP-Server.exe
+│   ├── SocksOverRDP-RemoteBootstrap.ps1
+│   └── Install-SocksOverRDP-Remote.ps1
 │
 ├── app/
 │   ├── api.py                     # FastAPI 路由
@@ -1541,6 +1541,47 @@ python run.py
 ```text
 http://127.0.0.1:8100
 ```
+
+## 20.1 瑞丰 aTrust / RDP / SocksOverRDP 首次部署
+
+瑞丰远程链路由通用 `remote_access` 基础设施负责，业务 Source 只使用最终的
+SOCKS 代理，不直接启动 aTrust、RDP 或远端进程：
+
+```text
+本地 aTrust 恢复会话
+↓
+写入 Windows RDP 凭据并打开专用 .rdp（重定向依赖所在盘符）
+↓
+目标机登录/重连计划任务按 SHA-256 同步 SocksOverRDP-Server.exe
+↓
+目标机当前 RDP 会话启动 Server
+↓
+本地 127.0.0.1:1080 可用
+↓
+瑞丰 Source 访问目标站点
+```
+
+本地程序首次启动远程链路时，会检查 DLL、COM 注册、RDP AddIns 配置和全部
+部署文件；缺失时从 `socks_over_rdp.source_dir` 复制到
+`socks_over_rdp.install_dir`。写入 `Program Files` 和注册 DLL 需要管理员权限。
+
+目标机只需做一次自举。在已经建立、且 `\\tsclient\C` 可见的 RDP 会话中，
+用管理员 CMD 运行：
+
+```cmd
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "\\tsclient\C\Program Files\Cisdi_Data_Auto_Analyzer\dependencies\Install-SocksOverRDP-Remote.ps1"
+```
+
+脚本会替换同名旧计划任务，注册登录/RDP 重连任务，并增加一个每分钟检查一次的
+看门狗任务。远端 EXE 安装成功后，重连时会直接使用目标机本地副本启动，不再等待
+`\\tsclient`；共享盘只用于首次复制或发现新版本时更新。以后不需要每次手工复制
+或点击 Server。RDP 密码只保存在未提交 Git 的 `config/config.json`，不会写入
+`.rdp` 文件或远端自举脚本。
+
+审核页面会区分两类故障：如果 RDP 地址本身不可达，继续提示检查 aTrust/RDP
+网络；如果 RDP 地址可达、但 SOCKS 通道等待 20 秒后仍未建立，则显示持久的
+“瑞丰现场首次部署”窗口，并提供从当前配置生成的一键复制命令。提示不会包含
+任何账号或密码。
 
 ---
 

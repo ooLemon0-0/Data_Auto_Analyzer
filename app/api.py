@@ -19,7 +19,9 @@ from app.diagnostics.models import DiagnosticQuery, DiagnosticSearchQuery
 from app.diagnostics.service import diagnostic_service
 from app.remote_access.service import RemoteAccessError, remote_access_service
 
-logger = logging.getLogger("data_review_platform")
+# Use Uvicorn's configured logger so application failures are always visible
+# in the same terminal as the HTTP access log.
+logger = logging.getLogger("uvicorn.error")
 
 app = FastAPI(title="Multi Project Data Review Platform", version="0.1.0")
 db.init_db()
@@ -102,6 +104,9 @@ def launch_remote_access(req: RemoteAccessRequest):
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except RemoteAccessError as exc:
+        logger.exception(
+            "远程连接启动失败: connection_id=%s", req.connection_id
+        )
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
@@ -115,9 +120,32 @@ def review_state(project_id: str, business_date: date):
 
 @app.post("/api/review/prepare")
 def prepare(req: PrepareRequest):
+    logger.info(
+        "开始准备审核数据: project=%s date=%s target=%s",
+        req.project_id,
+        req.business_date,
+        req.target_size,
+    )
     try:
-        return review_service.prepare(req.project_id, req.business_date, req.target_size)
+        result = review_service.prepare(
+            req.project_id,
+            req.business_date,
+            req.target_size,
+        )
+        logger.info(
+            "审核数据准备完成: project=%s date=%s",
+            req.project_id,
+            req.business_date,
+        )
+        return result
     except Exception as exc:
+        logger.exception(
+            "审核数据准备失败: project=%s date=%s target=%s error=%s",
+            req.project_id,
+            req.business_date,
+            req.target_size,
+            exc,
+        )
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 

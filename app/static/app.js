@@ -44,9 +44,9 @@ function wait(milliseconds) {
 function remotePhaseLabel(phase) {
   return {
     starting_vpn: "启动 aTrust…",
-    waiting_vpn: "等待 aTrust 登录…",
+    waiting_vpn: "恢复 aTrust 会话…",
     launching_rdp: "启动远程桌面…",
-    waiting_proxy: "等待 1080 代理…",
+    waiting_proxy: "等待目标端口服务…",
   }[phase] || "准备远程连接…";
 }
 
@@ -54,14 +54,22 @@ async function ensureProjectRemoteAccess(project) {
   const connectionId = project?.remote_connection_id;
   if (!connectionId) return;
 
+  // A new click starts a new detection attempt. A prompt dismissed during the
+  // previous attempt is therefore allowed to appear again.
+  hideRemoteSetupPrompt();
   let status = await api("/api/remote-access/launch", {
     method: "POST",
     body: JSON.stringify({connection_id: connectionId}),
   });
   const deadline = Date.now() + 6 * 60 * 1000;
   let lastPhase = "";
+  let remoteHintShown = false;
 
   while (Date.now() < deadline) {
+    if (status.operator_action && !remoteHintShown) {
+      showRemoteSetupPrompt(status.operator_action);
+      remoteHintShown = true;
+    }
     if (status.phase === "failed") {
       throw new Error(status.message || "远程连接启动失败");
     }
@@ -69,6 +77,7 @@ async function ensureProjectRemoteAccess(project) {
       status.phase === "ready"
       || (status.phase === "rdp_started" && !status.proxy_target)
     ) {
+      markRemoteSetupReady(status);
       return;
     }
     prepareBtn.textContent = remotePhaseLabel(status.phase);
@@ -108,11 +117,97 @@ async function api(url, options = {}) {
   return data;
 }
 
-function notify(message) {
+function notify(message, options = {}) {
   toast.textContent = message;
+  toast.classList.toggle("error", Boolean(options.error));
   toast.classList.add("show");
   clearTimeout(notify.timer);
+  if (options.persistent) {
+    toast.title = "点击关闭";
+    toast.onclick = () => toast.classList.remove("show");
+    return;
+  }
+  toast.title = "";
+  toast.onclick = null;
   notify.timer = setTimeout(() => toast.classList.remove("show"), 3200);
+}
+
+function showRemoteSetupPrompt(action) {
+  $("remoteSetupTitle").textContent = action.title || "瑞丰连接未完成";
+  $("remoteSetupMessage").textContent = action.message || "";
+  $("remoteSetupRoute").textContent =
+    `当前检测：RDP ${action.rdp_target || "—"} 可达；`
+    + `本机代理 ${action.proxy_target || "—"} 尚未建立。`;
+  $("remoteSetupCommand").textContent = action.command || "";
+  $("remoteSetupInstructions").hidden = false;
+  $("remoteSetupCopy").hidden = false;
+  $("remoteSetupDismiss").textContent = "我已运行，继续检测";
+  $("remoteSetupModal").hidden = false;
+}
+
+function markRemoteSetupReady(status) {
+  const modal = $("remoteSetupModal");
+  if (modal.hidden) return;
+  $("remoteSetupTitle").textContent = "瑞丰远程通道已建立";
+  $("remoteSetupMessage").textContent =
+    "已检测到 SocksOverRDP 通道。提示将保持显示，关闭后可查看本次拉取结果。";
+  $("remoteSetupRoute").textContent =
+    `当前检测：RDP ${status.rdp_target || "—"} 可达；`
+    + `本机代理 ${status.proxy_target || "—"} 已建立。`;
+  $("remoteSetupInstructions").hidden = true;
+  $("remoteSetupCopy").hidden = true;
+  $("remoteSetupDismiss").textContent = "关闭并查看拉取结果";
+}
+
+function hideRemoteSetupPrompt() {
+  $("remoteSetupModal").hidden = true;
+}
+
+async function copyRemoteSetupCommand() {
+  const command = $("remoteSetupCommand").textContent;
+  if (!command) return;
+  try {
+    await navigator.clipboard.writeText(command);
+    notify("现场部署命令已复制");
+  } catch (_) {
+    window.prompt("请复制下面的现场部署命令", command);
+  }
+}
+
+function requestReviewPrepare() {
+  return api("/api/review/prepare", {
+    method: "POST",
+    body: JSON.stringify({
+      project_id: projectSelect.value,
+      business_date: dateInput.value,
+      target_size: Number(targetInput.value),
+    }),
+  });
+}
+
+async function prepareWithRemoteRecovery(project) {
+  await ensureProjectRemoteAccess(project);
+  try {
+    return await requestReviewPrepare();
+  } catch (originalError) {
+    const connectionId = project?.remote_connection_id;
+    if (!connectionId) throw originalError;
+
+    let remoteStatus;
+    try {
+      remoteStatus = await api(
+        `/api/remote-access/${encodeURIComponent(connectionId)}/status`
+      );
+    } catch (_) {
+      throw originalError;
+    }
+    if (remoteStatus.proxy_reachable !== false) throw originalError;
+
+    notify("检测到远程桌面通道中断，正在自动重新连接并重试…");
+    await ensureProjectRemoteAccess(project);
+    prepareBtn.textContent = "重新拉取中…";
+    return requestReviewPrepare();
+  }
 }
 
 function decisionText(value) {
@@ -273,20 +368,12 @@ prepareBtn.addEventListener("click", async () => {
   prepareBtn.disabled = true;
   try {
     const project = selectedProject();
-    await ensureProjectRemoteAccess(project);
     prepareBtn.textContent = "拉取中…";
-    const data = await api("/api/review/prepare", {
-      method: "POST",
-      body: JSON.stringify({
-        project_id: projectSelect.value,
-        business_date: dateInput.value,
-        target_size: Number(targetInput.value),
-      }),
-    });
+    const data = await prepareWithRemoteRecovery(project);
     render(data);
     notify(`已载入当天数据，目标有效样本 ${data.target_size} 条`);
   } catch (err) {
-    notify(err.message);
+    notify(`拉取失败：${err.message}`, {error: true, persistent: true});
   } finally {
     prepareBtn.disabled = false;
     prepareBtn.textContent = "拉取并开始";
@@ -550,6 +637,9 @@ manualDiagnosticBtn.addEventListener("click", openManualDiagnostics);
 $("diagnosticClose").addEventListener("click", () => $("diagnosticModal").hidden = true);
 $("diagnosticModal").addEventListener("click", e => { if (e.target === $("diagnosticModal")) $("diagnosticModal").hidden = true; });
 $("copyLogBtn").addEventListener("click", async e => { e.preventDefault(); try { await navigator.clipboard.writeText($("rawLog").textContent); notify("日志已复制"); } catch (_) { notify("当前浏览器不支持自动复制"); } });
+$("remoteSetupCopy").addEventListener("click", copyRemoteSetupCommand);
+$("remoteSetupClose").addEventListener("click", hideRemoteSetupPrompt);
+$("remoteSetupDismiss").addEventListener("click", hideRemoteSetupPrompt);
 
 uploadBtn.addEventListener(
   "click",

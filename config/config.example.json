@@ -14,21 +14,26 @@
       "enabled": true,
       "vpn": {
         "type": "atrust",
-        "access_url": "https://60.2.40.222:4436",
-        "username": "tangzhou",
-        "password": "",
-        "executable_path": "C:\\Program Files (x86)\\Sangfor\\aTrust\\aTrustTray\\aTrustTray.exe",
-        "launch_settle_seconds": 2,
-        "interactive_login": true
+        "access_address": "https://vpn.example.com",
+        "start_type": "autostart",
+        "executable_path": "C:\\Program Files (x86)\\Sangfor\\aTrust\\aTrustTray\\aTrustTray.exe"
       },
       "rdp": {
         "host": "10.100.205.246",
         "subnet_mask": "255.255.255.0",
         "port": 3389,
-        "username": "administrator",
+        "username": "REMOTE-PC\\Administrator",
         "password": "",
         "connect_timeout_seconds": 180,
         "executable_path": "C:\\Windows\\System32\\mstsc.exe"
+      },
+      "socks_over_rdp": {
+        "source_dir": "./dependencies",
+        "install_dir": "C:\\Program Files\\Cisdi_Data_Auto_Analyzer\\dependencies",
+        "remote_install_dir": "C:\\Program Files\\Cisdi_Data_Auto_Analyzer\\dependencies",
+        "remote_wait_seconds": 90,
+        "plugin_dll": "SocksOverRDP-Plugin.dll",
+        "server_executable": "SocksOverRDP-Server.exe"
       },
       "socks_proxy": {
         "host": "127.0.0.1",
@@ -608,6 +613,256 @@
       }
     },
     {
+      "id": "binxin_76",
+      "name": "镔鑫铸坯号识别（76 号盒子 / 57、59 相机）",
+      "enabled": true,
+      "daily_target": 50,
+      "source": {
+        "type": "binxin_76_history",
+        "station": "76",
+        "refresh_on_prepare": false,
+        "easyconnect": {
+          "enabled": true,
+          "auto_detect": true,
+          "launch_command": [],
+          "healthcheck_url": "http://172.30.37.76:3000/",
+          "connect_timeout_seconds": 90
+        },
+        "history_url": "http://172.30.37.76:3000/#/history",
+        "date_input_format": "%Y/%m/%d",
+        "browser": {
+          "channel": "chrome",
+          "headless": false,
+          "user_data_dir": "./runtime/browser/binxin_76",
+          "download_dir": "./runtime/downloads/binxin_76",
+          "ignore_no_sandbox_arg": true
+        },
+        "auth": {
+          "login_url": "http://172.30.37.76/#/login",
+          "username": "",
+          "password": "",
+          "login_timeout_ms": 30000,
+          "page_settle_timeout_ms": 10000,
+          "selectors": {
+            "username": "form.el-form input.el-input__inner[placeholder=\"请输入用户名\"]",
+            "password": "form.el-form input.el-input__inner[placeholder=\"请输入密码\"]",
+            "login_button": "form.el-form button.login-button"
+          }
+        },
+        "selectors": {
+          "history_ready": ".page-history",
+          "start_date": ".page-history input.el-range-input[placeholder=\"开始时间\"]",
+          "end_date": ".page-history input.el-range-input[placeholder=\"结束时间\"]",
+          "search_button": "",
+          "table_rows": ".page-history .table-wrapper .el-table__body tbody tr.el-table__row",
+          "columns": {
+            "sequence": 1,
+            "image": 2,
+            "timestamp": 3,
+            "recognition_type": 4,
+            "recognition": 5,
+            "recognition_method": 6,
+            "recognition_status": 7,
+            "review_type": 8,
+            "manual_review_value": 9
+          }
+        },
+        "pagination": {
+          "next_button": ".page-history .el-pagination button.btn-next",
+          "active_page": ".page-history .el-pagination .el-pager li.is-active.number",
+          "page_change_timeout_ms": 15000,
+          "max_pages": 200
+        },
+        "export": {
+          "archive_data_export": false,
+          "filter_timeout_ms": 30000,
+          "wait_after_filter_ms": 1500
+        }
+      },
+      "diagnostics": {
+        "enabled": true,
+        "default_station": "76",
+        "parser": {
+          "type": "binxin_76_ocr",
+          "version": 1,
+          "match": {
+            "max_time_difference_seconds": 20,
+            "time_weight": 30,
+            "result_weight": 50,
+            "image_name_weight": 100
+          }
+        },
+        "resolver": {
+          "type": "binxin_76"
+        },
+        "renderer": {
+          "type": "binxin_76"
+        },
+        "stations": {
+          "76": {
+            "source": {
+              "type": "ssh_file",
+              "host": "172.30.37.76",
+              "port": 22,
+              "username": "cisdi",
+              "allow_unknown_host": true,
+              "connect_timeout_seconds": 10,
+              "command_timeout_seconds": 20,
+              "auth": {
+                "type": "password",
+                "password": ""
+              }
+            },
+            "log": {
+              "path": "/mnt/data01/embedded/logs/cisdi_edge_system/CisdiEdgeSystem.log",
+              "encoding": "utf-8",
+              "before_seconds": 8,
+              "after_seconds": 15,
+              "boundary_sample_lines": 80,
+              "cache_window_seconds": 180,
+              "cache_ttl_seconds": 300,
+              "cache_max_entries": 24,
+              "max_output_bytes": 8388608
+            }
+          }
+        }
+      },
+      "cache": {
+        "type": "sqlite",
+        "path": "./runtime/review.sqlite3",
+        "result_export_dir": "./runtime/results/binxin_76"
+      },
+      "sink": {
+        "type": "binxin_76_qingtui",
+        "enabled": false
+      }
+    },
+    {
+      "id": "binxin_77",
+      "name": "镔鑫铸坯号识别（77 号盒子 / 60、62 相机）",
+      "enabled": true,
+      "daily_target": 50,
+      "source": {
+        "type": "binxin_77_history",
+        "station": "77",
+        "refresh_on_prepare": false,
+        "easyconnect": {
+          "enabled": true,
+          "auto_detect": true,
+          "launch_command": [],
+          "healthcheck_url": "http://172.30.37.77:3000/",
+          "connect_timeout_seconds": 90
+        },
+        "history_url": "http://172.30.37.77:3000/#/history",
+        "date_input_format": "%Y/%m/%d",
+        "browser": {
+          "channel": "chrome",
+          "headless": false,
+          "user_data_dir": "./runtime/browser/binxin_77",
+          "download_dir": "./runtime/downloads/binxin_77",
+          "ignore_no_sandbox_arg": true
+        },
+        "auth": {
+          "login_url": "http://172.30.37.77/#/login",
+          "username": "",
+          "password": "",
+          "login_timeout_ms": 30000,
+          "page_settle_timeout_ms": 10000,
+          "selectors": {
+            "username": "form.el-form input.el-input__inner[placeholder=\"请输入用户名\"]",
+            "password": "form.el-form input.el-input__inner[placeholder=\"请输入密码\"]",
+            "login_button": "form.el-form button.login-button"
+          }
+        },
+        "selectors": {
+          "history_ready": ".page-history",
+          "start_date": ".page-history input.el-range-input[placeholder=\"开始时间\"]",
+          "end_date": ".page-history input.el-range-input[placeholder=\"结束时间\"]",
+          "search_button": "",
+          "table_rows": ".page-history .table-wrapper .el-table__body tbody tr.el-table__row",
+          "columns": {
+            "sequence": 1,
+            "image": 2,
+            "timestamp": 3,
+            "recognition_type": 4,
+            "recognition": 5,
+            "recognition_method": 6,
+            "recognition_status": 7,
+            "review_type": 8,
+            "manual_review_value": 9
+          }
+        },
+        "pagination": {
+          "next_button": ".page-history .el-pagination button.btn-next",
+          "active_page": ".page-history .el-pagination .el-pager li.is-active.number",
+          "page_change_timeout_ms": 15000,
+          "max_pages": 200
+        },
+        "export": {
+          "archive_data_export": false,
+          "filter_timeout_ms": 30000,
+          "wait_after_filter_ms": 1500
+        }
+      },
+      "diagnostics": {
+        "enabled": true,
+        "default_station": "77",
+        "parser": {
+          "type": "binxin_77_ocr",
+          "version": 1,
+          "match": {
+            "max_time_difference_seconds": 20,
+            "time_weight": 30,
+            "result_weight": 50,
+            "image_name_weight": 100
+          }
+        },
+        "resolver": {
+          "type": "binxin_77"
+        },
+        "renderer": {
+          "type": "binxin_77"
+        },
+        "stations": {
+          "77": {
+            "source": {
+              "type": "ssh_file",
+              "host": "172.30.37.77",
+              "port": 22,
+              "username": "cisdi",
+              "allow_unknown_host": true,
+              "connect_timeout_seconds": 10,
+              "command_timeout_seconds": 20,
+              "auth": {
+                "type": "password",
+                "password": ""
+              }
+            },
+            "log": {
+              "path": "/mnt/data01/embedded/logs/cisdi_edge_system/CisdiEdgeSystem.log",
+              "encoding": "utf-8",
+              "before_seconds": 8,
+              "after_seconds": 15,
+              "boundary_sample_lines": 80,
+              "cache_window_seconds": 180,
+              "cache_ttl_seconds": 300,
+              "cache_max_entries": 24,
+              "max_output_bytes": 8388608
+            }
+          }
+        }
+      },
+      "cache": {
+        "type": "sqlite",
+        "path": "./runtime/review.sqlite3",
+        "result_export_dir": "./runtime/results/binxin_77"
+      },
+      "sink": {
+        "type": "binxin_77_qingtui",
+        "enabled": false
+      }
+    },
+    {
       "id": "ruifeng_trolley",
       "name": "瑞丰台车识别",
       "enabled": true,
@@ -622,10 +877,7 @@
           "渣跨2号废钢台车"
         ],
         "proxy": {
-          "enabled": true,
           "server": "socks5://127.0.0.1:1080",
-          "requests_url": "socks5h://127.0.0.1:1080",
-          "healthcheck_url": "http://192.100.100.150:3000/",
           "connect_timeout_seconds": 8
         },
         "browser": {
@@ -642,9 +894,10 @@
           "login_timeout_ms": 30000,
           "page_settle_timeout_ms": 10000,
           "selectors": {
-            "username": "input[placeholder*=\"用户名\"], input[placeholder*=\"账号\"], input[type=\"text\"]",
-            "password": "input[type=\"password\"], input[placeholder*=\"密码\"]",
-            "login_button": "button:has-text(\"登录\"), input[type=\"submit\"]"
+            "username": "form.el-form input.el-input__inner[placeholder=\"请输入用户名\"]",
+            "password": "form.el-form input.el-input__inner[placeholder=\"请输入密码\"]",
+            "login_button": "form.el-form button.login-button",
+            "login_error": ".el-message--error:visible, .el-form-item__error:visible, .el-notification__content:visible, .el-message-box__message:visible"
           }
         },
         "selectors": {
@@ -682,10 +935,7 @@
           "钢水跨精炼1号台车"
         ],
         "proxy": {
-          "enabled": true,
           "server": "socks5://127.0.0.1:1080",
-          "requests_url": "socks5h://127.0.0.1:1080",
-          "healthcheck_url": "http://192.100.100.150:3000/",
           "connect_timeout_seconds": 8
         },
         "browser": {
@@ -702,9 +952,10 @@
           "login_timeout_ms": 30000,
           "page_settle_timeout_ms": 10000,
           "selectors": {
-            "username": "input[placeholder*=\"用户名\"], input[placeholder*=\"账号\"], input[type=\"text\"]",
-            "password": "input[type=\"password\"], input[placeholder*=\"密码\"]",
-            "login_button": "button:has-text(\"登录\"), input[type=\"submit\"]"
+            "username": "form.el-form input.el-input__inner[placeholder=\"请输入用户名\"]",
+            "password": "form.el-form input.el-input__inner[placeholder=\"请输入密码\"]",
+            "login_button": "form.el-form button.login-button",
+            "login_error": ".el-message--error:visible, .el-form-item__error:visible, .el-notification__content:visible, .el-message-box__message:visible"
           }
         },
         "selectors": {
