@@ -70,7 +70,7 @@ class CacheDialog(QDialog):
         self.total = label("正在统计本地图片…")
         self.total.setStyleSheet("color: #6658E8; background: #EEEBFC; padding: 14px; border-radius: 10px; font-weight: 600;")
         box.addWidget(self.total)
-        hint = label("按采集日期汇总所有点位的原图、复核图和未完成图片文件。只清理程序图片缓存，审核记录、统计、浏览器登录状态均保留。", muted=True)
+        hint = label("图片缓存达到 10 GB 后，会在后台从最旧日期开始自动清理，跳过正在下载或审核的日期。审核记录、统计和登录状态均保留。", muted=True)
         hint.setWordWrap(True)
         box.addWidget(hint)
         self.table = QTableWidget(0, 6)

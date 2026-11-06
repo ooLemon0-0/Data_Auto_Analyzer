@@ -184,6 +184,19 @@ def run_self_test(output: Path) -> int:
                     conn.execute("UPDATE items SET image_path=? WHERE id=?", (str(destination), row["id"]))
                     managed.append(destination)
             window.downloads.refresh_cached_dates([str(day)])
+            from app.desktop.cache_cleanup import CACHE_LIMIT_BYTES
+            old_image = Path(settings.storage.data_root) / first.id / "2000-01-01/images/old.jpg"
+            old_image.parent.mkdir(parents=True, exist_ok=True)
+            old_image.write_bytes(b"old picture")
+            pump_until(lambda: not window.cache_maintenance.running)
+            window.cache_maintenance.limit = sum(e.size for e in CacheStore(settings.storage.data_root).scan())
+            window._check_cache_limit()
+            pump_until(lambda: not window.cache_maintenance.running)
+            assert not old_image.exists() and all(p.exists() for p in managed)
+            assert not window.busy and window.progress_dialog is None and window.notice is None
+            assert window.service.state(first.id, day)["correct"] == 1
+            window.cache_maintenance.limit = CACHE_LIMIT_BYTES
+            report["checks"]["automatic_cache_limit_cleanup"] = True
             window.show_cache_manager()
             pump_until(lambda: not window.cache_dialog.loading)
             assert len(window.cache_dialog.entries) == 1

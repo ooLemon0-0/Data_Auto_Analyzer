@@ -22,6 +22,10 @@ logger = logging.getLogger(__name__)
 ACTIVE = {"queued", "running", "stopping"}
 
 
+class CacheInUse(RuntimeError):
+    pass
+
+
 def task_key(project_id: str, business_date: date | str):
     return f"{project_id}:{business_date}"
 
@@ -39,6 +43,8 @@ class DownloadManager:
         self.futures = set()
         self.closed = False
         self.cleaning_dates = set()
+        self.background_cleaning_dates = set()
+        self.review_dates = set()
         self._route_locks = {}
         self.state_path = Path(state_path) if state_path else None
 
@@ -82,13 +88,14 @@ class DownloadManager:
         with self.lock:
             if self.closed:
                 raise RuntimeError("下载调度已关闭")
-            if str(business_date) in self.cleaning_dates:
+            if str(business_date) in self.cleaning_dates - self.background_cleaning_dates:
                 raise RuntimeError("该日期的图片缓存正在清理，请稍后再拉取")
             for project_id in dict.fromkeys(project_ids):
                 project = self.projects[project_id]
                 key = task_key(project_id, business_date)
                 old = self.jobs.get(key)
-                if old and (old["status"] in ACTIVE or (old["status"] == "ready" and old["target"] == target)):
+                if old and (old["status"] in ACTIVE or (old["status"] == "ready" and old["target"] == target
+                        and str(business_date) not in self.cleaning_dates)):
                     continue
                 job = {"key": key, "project_id": project_id, "name": project.name,
                        "business_date": str(business_date), "target": target, "status": "queued",
@@ -205,7 +212,8 @@ class DownloadManager:
             for job in self.jobs.values():
                 if job["status"] == "queued":
                     blocker = next((j for j in self.jobs.values() if j["host"] == job["host"] and j["status"] in {"running", "stopping"}), None)
-                    job["message"] = f"等待同一设备上的“{blocker['name']}”结束后自动开始" if blocker else f"已有 {len(hosts)} 个点位在准备，完成一个后自动开始"
+                    job["message"] = ("正在释放旧图片缓存，随后自动拉取" if job["business_date"] in self.cleaning_dates else
+                        f"等待同一设备上的“{blocker['name']}”结束后自动开始" if blocker else f"已有 {len(hosts)} 个点位在准备，完成一个后自动开始")
                     self.changed(self._public(job))
             self._save()
 
@@ -295,15 +303,28 @@ class DownloadManager:
             self.changed(job)
         return len(snapshots)
 
+    def protect_review_dates(self, days):
+        """Claim dates before opening images; never wait for a disk cleanup."""
+        selected = set(days)
+        with self.lock:
+            if selected & self.cleaning_dates:
+                return False
+            self.review_dates = selected
+            return True
+
     @contextmanager
-    def cache_cleanup(self, days):
+    def cache_cleanup(self, days, *, background=False):
         selected = {date.fromisoformat(day).isoformat() for day in days}
         with self.lock:
             if any(j["business_date"] in selected and j["status"] in ACTIVE for j in self.jobs.values()):
-                raise RuntimeError("所选日期仍有拉取任务，请先停止这些任务，再清理缓存")
+                raise CacheInUse("所选日期仍有拉取任务，请先停止这些任务，再清理缓存")
             if selected & self.cleaning_dates:
-                raise RuntimeError("这些日期正在清理，请稍后刷新")
+                raise CacheInUse("这些日期正在清理，请稍后刷新")
+            if background and selected & self.review_dates:
+                raise CacheInUse("该日期正在审核，已跳过自动清理")
             self.cleaning_dates.update(selected)
+            if background:
+                self.background_cleaning_dates.update(selected)
         try:
             yield
         finally:
@@ -314,6 +335,7 @@ class DownloadManager:
             finally:
                 with self.lock:
                     self.cleaning_dates.difference_update(selected)
+                    self.background_cleaning_dates.difference_update(selected)
                 self._pump()
 
     def refresh_cached_dates(self, days):

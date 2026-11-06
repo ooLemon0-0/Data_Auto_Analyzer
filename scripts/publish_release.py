@@ -46,6 +46,8 @@ def main():
         response = session.post(api + "/releases", json={"tag_name": tag, "target_commitish": commit,
             "name": f"数据抽样审核 {tag} · Windows", "draft": True, "prerelease": False,
             "body": "Windows 10/11 64 位便携版，下载 AutoAnalyzer.exe 即可运行。\n\n"
+                    "- 图片缓存达到 10 GB 后，后台从最旧日期逐天自动清理，保留审核和同步记录。\n"
+                    "- 自动清理跳过正在下载或审核的日期；不弹窗、不锁界面，退出无需等待。\n"
                     "- 启动时先显示加载窗口，运行文件安装后复用，减少重复解压等待。\n"
                     "- 加载窗口显示文件校验、组件安装、配置读取和任务恢复；支持退出和跳过更新。\n"
                     "- 简化界面文案，审核按钮明确标注快捷键。\n"

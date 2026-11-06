@@ -22,6 +22,7 @@ from app.desktop.bootstrap import VERSION, data_directory
 from app.desktop.batch_dialogs import DownloadProgressDialog, ProjectSelectionDialog
 from app.desktop.downloads import DownloadManager, task_key
 from app.desktop.cache_store import CacheStore, format_bytes
+from app.desktop.cache_cleanup import CacheMaintenance, CACHE_CHECK_INTERVAL_MS
 from app.desktop.cache_dialog import CacheDialog
 from app.desktop.task_dialog import TaskBrowserDialog
 from app.desktop.tasks import CATEGORIES, TaskQuery, filter_tasks, project_category, review_summaries, task_rows
@@ -40,6 +41,7 @@ class JobSignals(QObject):
     progress = Signal(object)
     download_changed = Signal(object)
     network_finished = Signal(object)
+    cache_cleaned = Signal(object)
 
 
 class ReviewWindow(QMainWindow):
@@ -79,6 +81,7 @@ class ReviewWindow(QMainWindow):
         self.signals.progress.connect(self._progress)
         self.signals.download_changed.connect(self._download_changed)
         self.signals.network_finished.connect(self._network_checked)
+        self.signals.cache_cleaned.connect(self._background_cache_cleaned)
         self._build()
         self.download_dialog = DownloadProgressDialog(self)
         self.download_dialog.open_review.connect(self._open_task)
@@ -88,6 +91,11 @@ class ReviewWindow(QMainWindow):
         self.downloads = DownloadManager(settings.projects,
             lambda job: self.signals.download_changed.emit(job) if not self.closed else None, service=self.service,
             state_path=Path(db.DB_PATH).parent / "download_tasks.json")
+        self.cache_maintenance = CacheMaintenance(CacheStore(settings.storage.data_root), self.downloads,
+            finished=lambda result: self.signals.cache_cleaned.emit(result) if not self.closed else None)
+        self.cache_timer = QTimer(self)
+        self.cache_timer.setInterval(CACHE_CHECK_INTERVAL_MS)
+        self.cache_timer.timeout.connect(self._check_cache_limit)
         if not defer_restore:
             self.downloads.restore_sessions()
             self.restoring = False
@@ -98,12 +106,16 @@ class ReviewWindow(QMainWindow):
         self.sync_timer.timeout.connect(self._try_sync)
         if not defer_restore:
             self.sync_timer.start(5000)
+            self.cache_timer.start()
+            QTimer.singleShot(5000, self._check_cache_limit)
         if check_network and not defer_restore:
             QTimer.singleShot(250, self.check_network)
 
     def finish_startup(self, *, check_network=True):
         self.restoring = False
         self.sync_timer.start(5000)
+        self.cache_timer.start()
+        QTimer.singleShot(5000, self._check_cache_limit)
         QTimer.singleShot(0, self._maybe_open_ready)
         if check_network:
             QTimer.singleShot(250, self.check_network)
@@ -389,6 +401,7 @@ class ReviewWindow(QMainWindow):
 
     def _clear_review(self, target=50):
         self.state, self.active_key = None, None
+        self.downloads.protect_review_dates(set())
         self.viewer.set_image(None)
         self.image_stack.setCurrentIndex(0)
         self.recognition.setText("等待图片")
@@ -465,6 +478,7 @@ class ReviewWindow(QMainWindow):
                 return
             detail, retry = error
             if self.state:
+                self.downloads.protect_review_dates({self.state["business_date"]})
                 self.active_key = task_key(self.state["project_id"], self.state["business_date"])
                 if self.active_key in self.job_items:
                     self.task_list.setCurrentItem(self.job_items[self.active_key][0])
@@ -594,6 +608,8 @@ class ReviewWindow(QMainWindow):
         self.download_status_button.setText(f"下载进度  {ready}/{len(snapshots)}" + (f" · {active} 个后台任务" if active else ""))
         if job["status"] == "ready" and not self.restoring:
             self._maybe_open_ready()
+        if previous and previous["status"] in {"queued", "running", "stopping"} and job["status"] not in {"queued", "running", "stopping"}:
+            self._check_cache_limit()
 
     def _set_task_detail(self, job, item, detail):
         key = job["key"]
@@ -691,6 +707,18 @@ class ReviewWindow(QMainWindow):
         self.cache_dialog.raise_()
         self.cache_dialog.refresh()
 
+    def _check_cache_limit(self):
+        if not self.closed and not self.restoring:
+            self.cache_maintenance.start()
+
+    def _background_cache_cleaned(self, _result):
+        if self.closed:
+            return
+        # Task state changes arrive through download_changed. Refresh only an
+        # already open cache table; no popups, focus changes or status messages.
+        if self.cache_dialog and self.cache_dialog.isVisible() and not self.cache_dialog.loading:
+            self.cache_dialog.refresh()
+
     def clear_cached_dates(self, days):
         if self.busy or self.closed:
             if self.cache_dialog and not self.closed:
@@ -740,6 +768,12 @@ class ReviewWindow(QMainWindow):
         if self.busy:
             self.pending_open_key = key
             return
+        dates = {job["business_date"]}
+        if self.state:
+            dates.add(self.state["business_date"])
+        if not self.downloads.protect_review_dates(dates):
+            self.status.setText("该日期正在清理旧图片缓存，完成后可继续拉取。")
+            return
         self.download_dialog.hide()
         if activate:
             self.showNormal()
@@ -771,6 +805,7 @@ class ReviewWindow(QMainWindow):
         previous = (self.state or {}).get("current") or {}
         self.state, image = result
         state, item = self.state, self.state.get("current")
+        self.downloads.protect_review_dates({state["business_date"]})
         self.active_key = task_key(state["project_id"], state["business_date"])
         self.task_reviews[self.active_key] = {"valid": state["valid_count"], "target": state["target_size"],
             "complete": state["complete"], "uploaded": state.get("uploaded", False), "updated": ""}
@@ -908,6 +943,8 @@ class ReviewWindow(QMainWindow):
             self.foreground_token.cancel()
         self.network_token.cancel()
         self.sync_timer.stop()
+        self.cache_timer.stop()
+        self.cache_maintenance.close()
         self.task_refresh_timer.stop()
         self.downloads.shutdown(cancel=True)
         self.download_dialog.hide()
