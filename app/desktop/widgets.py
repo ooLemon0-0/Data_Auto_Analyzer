@@ -259,12 +259,14 @@ class NoticeDialog(QDialog):
 
 
 class StartupDialog(QDialog):
+    exit_requested = Signal()
+    skip_update = Signal()
     def __init__(self):
         super().__init__()
         self.setWindowTitle("数据抽样审核")
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setFixedSize(470, 300)
+        self.setFixedSize(500, 310)
         shell = QVBoxLayout(self)
         shell.setContentsMargins(0, 0, 0, 0)
         card = QFrame()
@@ -277,17 +279,35 @@ class StartupDialog(QDialog):
         mark.setPixmap(app_icon().pixmap(50, 50))
         box.addWidget(mark)
         box.addWidget(label("数据抽样审核", heading=True))
-        box.addWidget(label("连接现场数据，让每一份统计有据可查。", muted=True))
+        self.stage = label("正在加载界面")
+        box.addWidget(self.stage)
         box.addStretch()
-        bar = QProgressBar()
-        bar.setRange(0, 0)
-        bar.setTextVisible(False)
-        box.addWidget(bar)
-        box.addWidget(label("正在准备工作台，首次启动会稍久一些…", muted=True))
+        self.bar = QProgressBar()
+        self.bar.setRange(0, 0)
+        self.bar.setTextVisible(False)
+        box.addWidget(self.bar)
+        self.count = label("", muted=True)
+        box.addWidget(self.count)
+        actions = QHBoxLayout()
+        self.skip_button = button("跳过更新", self.skip_update.emit, variant="ghost")
+        self.skip_button.hide()
+        actions.addWidget(self.skip_button)
+        actions.addStretch()
+        actions.addWidget(button("退出", self.exit_requested.emit, variant="ghost"))
+        box.addLayout(actions)
+
+    def set_stage(self, message, current=None, total=None):
+        self.stage.setText(message)
+        if total and current is not None:
+            self.bar.setRange(0, total)
+            self.bar.setValue(current)
+            self.count.setText(f"{current:,} / {total:,}")
+        else:
+            self.bar.setRange(0, 0)
+            self.count.clear()
 
     def reject(self):
-        # A startup worker may still be copying the packaged browser runtime.
-        pass
+        self.exit_requested.emit()
 
     def finish(self):
         self.accept()

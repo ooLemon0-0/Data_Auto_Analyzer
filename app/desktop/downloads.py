@@ -113,7 +113,9 @@ class DownloadManager:
         with db.connect() as conn:
             query = "SELECT * FROM review_sessions ORDER BY updated_at DESC"
             sessions = conn.execute(query + " LIMIT ?", (limit,)).fetchall() if limit else conn.execute(query).fetchall()
-            for session in sessions:
+            for index, session in enumerate(sessions, 1):
+                from app.desktop.startup import report_startup
+                report_startup("恢复本地审核任务", index, len(sessions))
                 project = self.projects.get(session["project_id"])
                 if project is None:
                     continue

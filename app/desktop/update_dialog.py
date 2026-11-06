@@ -18,6 +18,7 @@ class UpdateDialog(QDialog):
     downloaded = Signal(object, object)
     failed = Signal(str)
     progress_changed = Signal(int, int)
+    update_available = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -58,8 +59,9 @@ class UpdateDialog(QDialog):
         self.check_timer.setSingleShot(True)
         self.check_timer.timeout.connect(self.skip)
 
-    def begin(self):
-        self.show()
+    def begin(self, *, show=True):
+        if show:
+            self.show()
         # DNS and third-party transports can ignore their own connect timeout.
         # This UI deadline still lets the workbench start within six seconds.
         self.check_timer.start(6000)
@@ -77,6 +79,8 @@ class UpdateDialog(QDialog):
             self.skip()
             return
         self.release = release
+        self.update_available.emit()
+        self.show()
         self.title.setText(f"发现新版本 {release.version}")
         self.message.setText(f"当前 {VERSION} → {release.version} · {release.size / 1048576:.1f} MB\n更新会保留本机图片、审核结果和登录状态。")
         self.progress.hide()

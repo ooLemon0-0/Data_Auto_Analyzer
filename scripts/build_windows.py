@@ -73,8 +73,9 @@ a.binaries = [entry for entry in a.binaries if Path(entry[0]).name.lower() not i
 for name in sorted(runtime_names):
     a.binaries.append((name.upper().replace('.DLL', '.dll'), str(qt_dir / name), 'BINARY'))
 pyz = PYZ(a.pure)
-exe = EXE(pyz, a.scripts, a.binaries, a.datas, [], name='AutoAnalyzer',
+exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name='AutoAnalyzerCore',
     debug=False, strip=False, upx=False, console=False, icon={str(stage / 'app.ico')!r})
+collection = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name='AutoAnalyzerRuntime')
 '''
     spec.write_text(contents, encoding="utf-8")
     env = os.environ.copy()
@@ -92,12 +93,15 @@ exe = EXE(pyz, a.scripts, a.binaries, a.datas, [], name='AutoAnalyzer',
     release = ROOT / "release"
     release.mkdir(exist_ok=True)
     target = release / "数据抽样审核.exe"
-    shutil.copy2(ROOT / "dist/AutoAnalyzer.exe", target)
+    from scripts.windows_bundle import build_launcher
+    launcher = build_launcher(ROOT / "dist/AutoAnalyzerRuntime", target, stage / "app.ico", stage=ROOT / "build/launcher")
     digest = hashlib.file_digest(target.open("rb"), "sha256").hexdigest()
     (release / "SHA256SUMS.txt").write_text(f"{digest}  AutoAnalyzer.exe\n{digest}  {target.name}\n", encoding="utf-8")
     (release / "使用说明.txt").write_text(
         f"数据抽样审核 桌面版 {VERSION}（Windows 10/11 64 位）\n\n"
         "1. 双击“数据抽样审核.exe”，无需安装 Python 或浏览器，无需修改配置文件。\n"
+        "   先显示加载窗口；运行文件只在首次使用或升级后安装，之后从本机缓存启动。\n"
+        "   加载窗口显示运行文件校验、组件安装、配置读取和本地任务恢复进度，可随时退出。\n"
         "   启动时自动检查 GitHub Releases；连接失败直接进入工作台，也可点击“跳过更新”。\n"
         "   发现新版可下载、校验并自动重启更新；下载时也可跳过，继续使用当前版本。\n"
         "   主界面“缓存空间”可按采集日期查看占用、勾选多个日期清理图片；审核记录保留。\n"
@@ -123,7 +127,7 @@ exe = EXE(pyz, a.scripts, a.binaries, a.datas, [], name='AutoAnalyzer',
         "已内置网站账号、点位和目标文档，以及独立 Chromium 与 Qt 界面组件。无需安装 Google Chrome。\n"
         "企业 VPN 与轻推的交互验证无法用网站密码代替；轻推文档同步目前仍使用内置浏览器。\n",
         encoding="utf-8-sig")
-    print(json.dumps({"exe": str(target), "bytes": target.stat().st_size, "sha256": digest}))
+    print(json.dumps({"exe": str(target), "bytes": target.stat().st_size, "sha256": digest, **launcher}))
 
 
 if __name__ == "__main__":

@@ -51,6 +51,19 @@ def test_packaged_browser_is_cached_outside_onefile_temporary_directory(tmp_path
     assert target.stat().st_mtime_ns == timestamp
 
 
+def test_persistent_launcher_runtime_reuses_its_browser_without_copying(tmp_path, monkeypatch):
+    bundle = tmp_path / "runtime/_internal"
+    browser = bundle / "desktop_assets/chromium/chrome.exe"
+    browser.parent.mkdir(parents=True)
+    browser.write_bytes(b"browser")
+    monkeypatch.setattr("app.desktop.bootstrap.resource_root", lambda: bundle)
+    monkeypatch.setattr("app.desktop.bootstrap.sys.frozen", True, raising=False)
+    monkeypatch.setenv("AUTOANALYZER_LAUNCHER_EXE", str(tmp_path / "app.exe"))
+    monkeypatch.setenv("AUTOANALYZER_DATA_DIR", str(tmp_path / "data"))
+    assert bundled_browser() == browser
+    assert not (tmp_path / "data/browser-runtime").exists()
+
+
 @pytest.mark.parametrize("running,expected_launches", [(False, 1), (True, 0)])
 def test_easyconnect_is_started_only_when_client_is_not_running(tmp_path, monkeypatch, running, expected_launches):
     executable = tmp_path / "SangforCSClient.exe"

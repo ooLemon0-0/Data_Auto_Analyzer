@@ -33,6 +33,7 @@ def main() -> int:
     from PySide6.QtWidgets import QApplication
     from app.desktop.theme import apply_theme
     from app.desktop.widgets import NoticeDialog, StartupDialog
+    from app.desktop.startup import notify_window_visible, report_startup, set_startup_callback
 
     app = QApplication(sys.argv[:1])
     apply_theme(app)
@@ -43,12 +44,23 @@ def main() -> int:
         key = hashlib.sha256(str(data_directory()).encode()).hexdigest()[:16]
         mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "Local\\AutoAnalyzer_" + key)
         if ctypes.windll.kernel32.GetLastError() == 183:
+            notify_window_visible()
             NoticeDialog(None, "程序已经打开", "请从 Windows 任务栏切换到已有的审核窗口。").exec()
             ctypes.windll.kernel32.CloseHandle(ctypes.c_void_p(mutex))
             return 0
     splash = StartupDialog()
-    if test_report or not getattr(sys, "frozen", False):
-        splash.show()
+    splash.show()
+    app.processEvents()
+    notify_window_visible()
+    cancelled = Event()
+    def cancel_startup():
+        cancelled.set()
+        set_startup_callback(None)
+        if hasattr(app, "update_dialog"):
+            app.update_dialog.finished = True
+            app.update_dialog.token.cancel()
+        app.quit()
+    splash.exit_requested.connect(cancel_startup)
     if args.ui_smoke_test:
         args.ui_smoke_test.parent.mkdir(parents=True, exist_ok=True)
         app.processEvents()
@@ -56,18 +68,49 @@ def main() -> int:
 
     class StartupSignals(QObject):
         ready = Signal(object)
+        restored = Signal(object)
+        status = Signal(str, object, object)
     signals = StartupSignals()
+    signals.status.connect(splash.set_stage)
+    set_startup_callback(signals.status.emit)
 
     def loaded(error):
+        if cancelled.is_set():
+            return
         if error:
             splash.hide()
-            NoticeDialog(None, "工作台暂时无法启动", "请重新打开程序。如果问题持续，请将详细信息提供给维护人员。",
+            NoticeDialog(None, "无法启动程序", "请重新打开程序。如果问题持续，请将详细信息提供给维护人员。",
                          detail=f"{error}\n\n诊断文件：{data_directory() / 'logs/desktop.log'}").exec()
             app.quit()
             return
         from app.desktop.window import ReviewWindow
         try:
-            app.window = ReviewWindow(check_network=not bool(test_report))
+            splash.set_stage("创建审核界面")
+            app.processEvents()
+            app.window = ReviewWindow(check_network=False, defer_restore=True)
+            def restore():
+                try:
+                    report_startup("恢复本地审核任务")
+                    app.window.downloads.restore_sessions()
+                    signals.restored.emit(None)
+                except Exception as exc:
+                    signals.restored.emit(str(exc))
+            Thread(target=restore, daemon=True).start()
+        except Exception as exc:
+            logging.exception("Desktop startup failed")
+            signals.restored.emit(str(exc))
+
+    def workspace_ready(error):
+        if cancelled.is_set():
+            return
+        if error:
+            splash.hide()
+            NoticeDialog(None, "无法读取本地任务", "请重新打开程序。", detail=error).exec()
+            app.quit()
+            return
+        try:
+            set_startup_callback(None)
+            app.window.finish_startup(check_network=not bool(test_report))
             app.window.show()
             splash.finish()
             if args.update_smoke_test:
@@ -118,9 +161,10 @@ def main() -> int:
         except Exception as exc:
             logging.exception("Desktop startup failed")
             splash.hide()
-            NoticeDialog(None, "工作台暂时无法启动", "请重新打开程序。", detail=str(exc)).exec()
+            NoticeDialog(None, "无法启动程序", "请重新打开程序。", detail=str(exc)).exec()
             app.quit()
     signals.ready.connect(loaded)
+    signals.restored.connect(workspace_ready)
 
     def prepare():
         try:
@@ -128,12 +172,17 @@ def main() -> int:
             # Never block painting or animation in the startup window.
             from app.core.config import settings
             from app.desktop.window import ReviewWindow
+            report_startup("检查本地数据库")
+            from app import db
+            db.init_db()
             signals.ready.emit(None)
         except Exception as exc:
             logging.exception("Desktop initialization failed")
             signals.ready.emit(str(exc))
     def begin_startup():
+        splash.skip_button.hide()
         splash.show()
+        splash.set_stage("加载审核组件")
         QTimer.singleShot(50, lambda: Thread(target=prepare, daemon=True).start())
     if (getattr(sys, "frozen", False) and not test_report) or args.update_smoke_test:
         from app.desktop.update_dialog import UpdateDialog
@@ -145,9 +194,13 @@ def main() -> int:
                 f"https://github.com/{REPOSITORY}/releases/download/v9.0.0/{ASSET_NAME}", "0" * 64,
                 250_000_000, "更新检查验证：可跳过、保留当前版本并进入工作台。")
         app.update_dialog = UpdateDialog()
+        splash.set_stage("检查更新")
+        splash.skip_button.show()
+        splash.skip_update.connect(app.update_dialog.skip)
+        app.update_dialog.update_available.connect(splash.hide)
         app.update_dialog.continue_startup.connect(begin_startup)
         app.update_dialog.install_started.connect(app.quit)
-        app.update_dialog.begin()
+        app.update_dialog.begin(show=False)
         if args.update_smoke_test:
             args.update_smoke_test.parent.mkdir(parents=True, exist_ok=True)
             def capture_update():

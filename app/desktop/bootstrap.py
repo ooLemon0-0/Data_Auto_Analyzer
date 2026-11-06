@@ -11,7 +11,7 @@ import sys
 
 
 APP_NAME = "AutoAnalyzer"
-VERSION = "1.5.0"
+VERSION = "1.6.0"
 
 
 def resource_root() -> Path:
@@ -27,6 +27,8 @@ def data_directory() -> Path:
 
 
 def bundled_browser() -> Path | None:
+    from app.desktop.startup import report_startup
+    report_startup("检查浏览器组件")
     candidate = resource_root() / "desktop_assets/chromium/chrome.exe"
     if not candidate.exists():
         if getattr(sys, "frozen", False):
@@ -37,6 +39,10 @@ def bundled_browser() -> Path | None:
         if installed.exists():
             return installed
         return None
+    # The launcher keeps the entire runtime in AppData. Its browser no longer
+    # lives in a disposable one-file directory, so a second copy is unnecessary.
+    if getattr(sys, "frozen", False) and os.environ.get("AUTOANALYZER_LAUNCHER_EXE"):
+        return candidate
     # A one-file executable extracts into a temporary directory. Keep the browser
     # in AppData so a saved login window survives application updates and exit.
     manifest_path = resource_root() / "desktop_assets/build_info.json"
@@ -48,7 +54,12 @@ def bundled_browser() -> Path | None:
     marker = target / ".complete"
     if not marker.exists() or not (target / "chrome.exe").exists():
         target.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(candidate.parent, target, dirs_exist_ok=True)
+        files = [path for path in candidate.parent.rglob("*") if path.is_file()]
+        for index, path in enumerate(files, 1):
+            destination = target / path.relative_to(candidate.parent)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, destination)
+            report_startup("安装浏览器组件", index, len(files))
         marker.write_text(str(revision), encoding="utf-8")
     return target / "chrome.exe"
 
@@ -80,6 +91,8 @@ def relocate_config(config: dict, root: Path, browser: Path | None) -> dict:
 
 
 def load_desktop_config() -> dict:
+    from app.desktop.startup import report_startup
+    report_startup("读取点位配置")
     path = resource_root() / "desktop_assets/config.json"
     if not path.exists() and not getattr(sys, "frozen", False):
         path = resource_root() / "config/config.json"

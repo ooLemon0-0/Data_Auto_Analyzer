@@ -131,7 +131,7 @@ def download_update(release: Release, token: CancellationToken, progress, root=N
 def launch_installer(downloaded: Path, release: Release, *, executable=None):
     if sys.platform != "win32":
         raise RuntimeError("自动安装仅适用于 Windows")
-    target = Path(executable or sys.executable).resolve()
+    target = Path(executable or os.environ.get("AUTOANALYZER_LAUNCHER_EXE") or sys.executable).resolve()
     downloaded = downloaded.resolve()
     if target == downloaded or not target.is_file():
         raise ValueError("当前程序路径无效")

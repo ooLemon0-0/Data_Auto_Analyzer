@@ -113,6 +113,18 @@ def test_windows_installer_receives_literal_paths_and_checksum(tmp_path, monkeyp
     assert current.read_bytes() == b"old" and not list(tmp_path.glob(".autoanalyzer*"))
 
 
+def test_cached_runtime_updates_the_original_launcher_not_internal_core(tmp_path, monkeypatch):
+    if os.name != "nt": pytest.skip("Windows installer")
+    launcher, core, downloaded = (tmp_path / name for name in ("launcher.exe", "core.exe", "new.exe"))
+    for path in (launcher, core, downloaded): path.write_bytes(b"MZfixture")
+    monkeypatch.setenv("AUTOANALYZER_LAUNCHER_EXE", str(launcher))
+    monkeypatch.setattr(updates.sys, "executable", str(core))
+    calls = []
+    monkeypatch.setattr(updates.subprocess, "Popen", lambda args, **_kw: calls.append(args))
+    updates.launch_installer(downloaded, updates.Release("1.7.0", URL, DIGEST, 10))
+    assert calls[0][calls[0].index("-TargetPath") + 1] == str(launcher.resolve())
+
+
 def test_update_dialog_skip_ignores_late_result_and_can_cancel_download(monkeypatch, tmp_path, qapp):
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication

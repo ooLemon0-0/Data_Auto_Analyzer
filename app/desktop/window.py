@@ -43,7 +43,7 @@ class JobSignals(QObject):
 
 
 class ReviewWindow(QMainWindow):
-    def __init__(self, *, check_network: bool = True):
+    def __init__(self, *, check_network: bool = True, defer_restore: bool = False):
         super().__init__()
         self.service = ReviewService()
         db.init_db()
@@ -88,14 +88,23 @@ class ReviewWindow(QMainWindow):
         self.downloads = DownloadManager(settings.projects,
             lambda job: self.signals.download_changed.emit(job) if not self.closed else None, service=self.service,
             state_path=Path(db.DB_PATH).parent / "download_tasks.json")
-        self.downloads.restore_sessions()
-        self.restoring = False
-        QTimer.singleShot(0, self._maybe_open_ready)
+        if not defer_restore:
+            self.downloads.restore_sessions()
+            self.restoring = False
+            QTimer.singleShot(0, self._maybe_open_ready)
         if not check_network:
             self.vpn_status.setText("●  网络尚未检查")
         self.sync_timer = QTimer(self)
         self.sync_timer.timeout.connect(self._try_sync)
+        if not defer_restore:
+            self.sync_timer.start(5000)
+        if check_network and not defer_restore:
+            QTimer.singleShot(250, self.check_network)
+
+    def finish_startup(self, *, check_network=True):
+        self.restoring = False
         self.sync_timer.start(5000)
+        QTimer.singleShot(0, self._maybe_open_ready)
         if check_network:
             QTimer.singleShot(250, self.check_network)
 
@@ -120,7 +129,7 @@ class ReviewWindow(QMainWindow):
         titles = QVBoxLayout()
         titles.setSpacing(5)
         titles.addWidget(label("图片审核", heading=True))
-        self.subtitle = label("点击“拉取数据”，选择本次要统计的点位。", muted=True)
+        self.subtitle = label("未选择审核任务", muted=True)
         self.subtitle.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         titles.addWidget(self.subtitle)
         header.addLayout(titles, 1)
@@ -140,9 +149,9 @@ class ReviewWindow(QMainWindow):
         decisions = QHBoxLayout()
         decisions.setSpacing(10)
         for text, decision, glyph, color in (
-            ("正确     1", "correct", "check", "#27845B"),
-            ("错误     2", "incorrect", "close", "#D05C68"),
-            ("无效并补抽     3", "invalid", "skip", "#71798D")):
+            ("正确  ·  快捷键 1", "correct", "check", "#27845B"),
+            ("错误  ·  快捷键 2", "incorrect", "close", "#D05C68"),
+            ("无效并补抽  ·  快捷键 3", "invalid", "skip", "#71798D")):
             action = button(text, lambda _checked=False, d=decision: self.decide(d), glyph=glyph, color=color)
             action.setProperty("decision", decision)
             action.setMinimumHeight(48)
@@ -184,7 +193,6 @@ class ReviewWindow(QMainWindow):
         title = label("数据抽样审核")
         title.setStyleSheet("font-size: 16px; font-weight: 700;")
         name.addWidget(title)
-        name.addWidget(label("REVIEW WORKSPACE", muted=True))
         brand.addLayout(name, 1)
         outer.addLayout(brand)
         scroll = QScrollArea()
@@ -206,9 +214,6 @@ class ReviewWindow(QMainWindow):
         self.fetch_button.setMinimumHeight(46)
         self.controls.append(self.fetch_button)
         box.addWidget(self.fetch_button)
-        hint = label("多点位并发下载，先就绪、先审核。", muted=True)
-        hint.setWordWrap(True)
-        box.addWidget(hint)
         task_heading = QHBoxLayout()
         task_heading.addWidget(label("本地审核任务", section=True), 1)
         task_heading.addWidget(button("筛选 / 排序", self.show_task_browser, variant="ghost"))
@@ -316,7 +321,7 @@ class ReviewWindow(QMainWindow):
         for text, glyph, action, hint in (("", "minus", lambda: self.viewer.change_zoom(1/1.2), "缩小"),
             ("", "plus", lambda: self.viewer.change_zoom(1.2), "放大"),
             ("适应", "fit", lambda: self.viewer.fit(), "适应窗口"),
-            ("旋转", "rotate", self.rotate, "顺时针旋转 90° · R")):
+            ("旋转", "rotate", self.rotate, "顺时针旋转 90° · 快捷键 R")):
             tool = button(text, action, variant="tool", glyph=glyph, color="#C7CFDF")
             tool.setToolTip(hint)
             top.addWidget(tool)
@@ -332,11 +337,11 @@ class ReviewWindow(QMainWindow):
         mark.setPixmap(icon("image", "#505A73", 58).pixmap(58, 58))
         mark.setAlignment(Qt.AlignmentFlag.AlignCenter)
         empty_box.addWidget(mark)
-        title = label("先选择点位和日期，再准备审核图片")
+        title = label("暂无审核图片")
         title.setStyleSheet("font-size: 19px; font-weight: 500; color: #C7CFDF;")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         empty_box.addWidget(title)
-        text = label("选择要拉取的点位，任一点位就绪后即可开始审核。")
+        text = label("点击左侧“拉取数据”，选择点位和日期。")
         text.setStyleSheet("font-size: 12px; color: #79859B;")
         text.setAlignment(Qt.AlignmentFlag.AlignCenter)
         empty_box.addWidget(text)
@@ -350,7 +355,7 @@ class ReviewWindow(QMainWindow):
         self.prev_button = button("上一张", lambda: self.navigate("previous"), variant="tool", glyph="left", color="#C7CFDF")
         self.next_button = button("下一张", lambda: self.navigate("next"), variant="tool", glyph="right", color="#C7CFDF")
         bottom.addWidget(self.prev_button)
-        self.image_hint = label("滚轮缩放 · 拖动查看 · R 旋转")
+        self.image_hint = label("滚轮缩放 · 拖动查看 · 快捷键 R 旋转")
         self.image_hint.setStyleSheet("font-size: 11px; color: #79859B;")
         self.image_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         bottom.addWidget(self.image_hint, 1)
@@ -464,7 +469,7 @@ class ReviewWindow(QMainWindow):
                 if self.active_key in self.job_items:
                     self.task_list.setCurrentItem(self.job_items[self.active_key][0])
             self.status.setText("操作未完成 · 已完成的审核结果仍保存在本机。")
-            self._notice("这次操作没有完成", self._friendly_error(detail), detail=detail, retry=retry)
+            self._notice("操作失败", self._friendly_error(detail), detail=detail, retry=retry)
             return
         try:
             callback(result)
@@ -555,7 +560,7 @@ class ReviewWindow(QMainWindow):
         self.ready_priority = [task_key(pid, day) for pid in project_ids]
         self.download_dialog.set_scope(self.ready_priority, day, target)
         keys = self.downloads.submit(project_ids, day, target)
-        self.status.setText(f"已安排 {len(keys)} 个后台任务；就绪的点位可以先审核。")
+        self.status.setText(f"正在拉取 {len(keys)} 个点位的数据。")
         self.show_download_progress()
         self._maybe_open_ready()
 
@@ -788,7 +793,7 @@ class ReviewWindow(QMainWindow):
             self.viewer.set_image(image, reset=item["item_id"] != previous.get("item_id"))
             self.image_stack.setCurrentIndex(1)
         self._refresh_enabled()
-        self.status.setText("审核完成 · 统计结果已保存，可以同步轻推。" if state["complete"] else "已保存到本机 · 1 正确 / 2 错误 / 3 无效并补抽。")
+        self.status.setText("审核完成，统计已保存。" if state["complete"] else "审核结果已保存。")
         self.saved_badge.setText("审核已完成" if state["complete"] else "本地已保存")
         self.review_marks[self.active_key] = "审核完成" if state["complete"] else f"审核 {state['valid_count']}/{state['target_size']}"
         if self.active_key in self.job_items:
