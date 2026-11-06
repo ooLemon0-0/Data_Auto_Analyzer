@@ -9,6 +9,7 @@ from typing import Iterable
 
 from app.core.config import settings
 from app.core.models import SourceItem
+from app.core.cancellation import check_cancelled
 
 DB_PATH = Path(settings.storage.db_path).resolve()
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -16,11 +17,12 @@ DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 @contextmanager
 def connect():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
     try:
         yield conn
+        check_cancelled()
         conn.commit()
     finally:
         conn.close()
@@ -34,6 +36,8 @@ def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) 
 
 def init_db() -> None:
     with connect() as conn:
+        # Keep audit reads responsive while background jobs populate other points.
+        conn.execute("PRAGMA journal_mode=WAL")
         conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS items (
@@ -84,6 +88,7 @@ def upsert_items(project_id: str, business_date: str, items: Iterable[SourceItem
     count = 0
     with connect() as conn:
         for item in items:
+            check_cancelled()
             image_path = str(item.image_path.resolve()) if item.image_path else ""
             conn.execute(
                 """
@@ -91,7 +96,10 @@ def upsert_items(project_id: str, business_date: str, items: Iterable[SourceItem
                                   recognition_text, metadata_json, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(project_id, business_date, source_key) DO UPDATE SET
-                    image_path=excluded.image_path,
+                    image_path=CASE
+                        WHEN excluded.image_path <> '' THEN excluded.image_path
+                        ELSE items.image_path
+                    END,
                     image_url=excluded.image_url,
                     recognition_text=excluded.recognition_text,
                     metadata_json=excluded.metadata_json

@@ -368,10 +368,15 @@ prepareBtn.addEventListener("click", async () => {
   prepareBtn.disabled = true;
   try {
     const project = selectedProject();
-    prepareBtn.textContent = "拉取中…";
+    prepareBtn.textContent = "抽样并缓存中…";
     const data = await prepareWithRemoteRecovery(project);
     render(data);
-    notify(`已载入当天数据，目标有效样本 ${data.target_size} 条`);
+    const localReady = Number(data.local_images_ready || 0);
+    notify(
+      localReady
+        ? `已载入当天数据，${localReady} 张抽样图片已缓存到本地`
+        : `已载入当天数据，目标有效样本 ${data.target_size} 条`
+    );
   } catch (err) {
     notify(`拉取失败：${err.message}`, {error: true, persistent: true});
   } finally {

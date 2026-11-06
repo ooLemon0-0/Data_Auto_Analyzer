@@ -10,7 +10,7 @@
   "remote_connections": [
     {
       "id": "atrust_remote_246",
-      "name": "aTrust 远程项目（10.100.205.246）",
+      "name": "aTrust 远程项目（203.0.113.246）",
       "enabled": true,
       "vpn": {
         "type": "atrust",
@@ -19,10 +19,10 @@
         "executable_path": "C:\\Program Files (x86)\\Sangfor\\aTrust\\aTrustTray\\aTrustTray.exe"
       },
       "rdp": {
-        "host": "10.100.205.246",
+        "host": "203.0.113.246",
         "subnet_mask": "255.255.255.0",
         "port": 3389,
-        "username": "REMOTE-PC\\Administrator",
+        "username": "",
         "password": "",
         "connect_timeout_seconds": 180,
         "executable_path": "C:\\Windows\\System32\\mstsc.exe"
@@ -55,10 +55,10 @@
           "enabled": true,
           "auto_detect": true,
           "launch_command": [],
-          "healthcheck_url": "http://172.30.31.73:3000/",
+          "healthcheck_url": "http://192.0.2.73:3000/",
           "connect_timeout_seconds": 90
         },
-        "history_url": "http://172.30.31.73:3000/#/history",
+        "history_url": "http://192.0.2.73:3000/#/history",
         "browser": {
           "channel": "chrome",
           "headless": false,
@@ -121,9 +121,9 @@
           "73": {
             "source": {
               "type": "ssh_file",
-              "host": "172.30.31.73",
+              "host": "192.0.2.73",
               "port": 22,
-              "username": "lcfc",
+              "username": "",
               "allow_unknown_host": true,
               "connect_timeout_seconds": 10,
               "command_timeout_seconds": 20,
@@ -139,9 +139,9 @@
                 "when": "ocr_empty",
                 "source": {
                   "type": "ssh_file",
-                  "host": "172.30.31.84",
+                  "host": "192.0.2.84",
                   "port": 22,
-                  "username": "lcfc",
+                  "username": "",
                   "allow_unknown_host": true,
                   "connect_timeout_seconds": 10,
                   "command_timeout_seconds": 20,
@@ -174,7 +174,7 @@
       "sink": {
         "type": "binxin_73_84_qingtui",
         "enabled": true,
-        "document_url": "https://web.qingtui.com/drive/preview/1541208802663981056",
+        "document_url": "https://web.qingtui.com/drive/preview/EXAMPLE_DOCUMENT_ID",
         "append_strategy": "spreadsheet_keyboard",
         "format": {
           "columns": [
@@ -253,15 +253,22 @@
       "daily_target": 50,
       "source": {
         "type": "binxin_72_79_history",
+        "station": "72",
+        "api": {
+          "enabled": true,
+          "page_size": 500,
+          "request_timeout_ms": 60000
+        },
+        "prefetch_sample_images": true,
         "refresh_on_prepare": false,
         "easyconnect": {
           "enabled": true,
           "auto_detect": true,
           "launch_command": [],
-          "healthcheck_url": "http://172.30.31.72:3000/",
+          "healthcheck_url": "http://192.0.2.72:3000/",
           "connect_timeout_seconds": 90
         },
-        "history_url": "http://172.30.31.72:3000/#/history",
+        "history_url": "http://192.0.2.72:3000/#/history",
         "browser": {
           "channel": "chrome",
           "headless": false,
@@ -270,6 +277,7 @@
           "ignore_no_sandbox_arg": true
         },
         "auth": {
+          "credentials_from_project": "binxin_billet",
           "username": "",
           "password": "",
           "login_timeout_ms": 30000,
@@ -279,6 +287,9 @@
             "login_button": "button:has-text(\"登录\")"
           },
           "page_settle_timeout_ms": 10000
+        },
+        "export": {
+          "archive_data_export": false
         }
       },
       "diagnostics": {
@@ -304,9 +315,9 @@
           "72": {
             "source": {
               "type": "ssh_file",
-              "host": "172.30.31.72",
+              "host": "192.0.2.72",
               "port": 22,
-              "username": "lcfc",
+              "username": "",
               "allow_unknown_host": true,
               "connect_timeout_seconds": 10,
               "command_timeout_seconds": 20,
@@ -322,9 +333,9 @@
                 "when": "ocr_empty",
                 "source": {
                   "type": "ssh_file",
-                  "host": "172.30.31.79",
+                  "host": "192.0.2.79",
                   "port": 22,
-                  "username": "lcfc",
+                  "username": "",
                   "allow_unknown_host": true,
                   "connect_timeout_seconds": 10,
                   "command_timeout_seconds": 20,
@@ -357,7 +368,7 @@
       "sink": {
         "type": "binxin_72_79_qingtui",
         "enabled": true,
-        "document_url": "https://web.qingtui.com/drive/preview/1541208802663981056",
+        "document_url": "https://web.qingtui.com/drive/preview/EXAMPLE_DOCUMENT_ID",
         "append_strategy": "spreadsheet_keyboard",
         "format": {
           "columns": [
@@ -410,7 +421,7 @@
           ]
         },
         "selectors": {
-          "sheet_name": "72-79",
+          "sheet_name": "1期-72",
           "create_sheet_if_missing": true,
           "sheet_create_timeout_seconds": 20,
           "sheet_add_button": ".sheets-add-btn-wrapper button",
@@ -436,15 +447,22 @@
       "daily_target": 50,
       "source": {
         "type": "binxin_74_71_history",
+        "station": "74",
+        "api": {
+          "enabled": true,
+          "page_size": 500,
+          "request_timeout_ms": 60000
+        },
+        "prefetch_sample_images": true,
         "refresh_on_prepare": false,
         "easyconnect": {
           "enabled": true,
           "auto_detect": true,
           "launch_command": [],
-          "healthcheck_url": "http://172.30.31.74:3000/",
+          "healthcheck_url": "http://192.0.2.74:3000/",
           "connect_timeout_seconds": 90
         },
-        "history_url": "http://172.30.31.74:3000/#/history",
+        "history_url": "http://192.0.2.74:3000/#/history",
         "browser": {
           "channel": "chrome",
           "headless": false,
@@ -453,6 +471,7 @@
           "ignore_no_sandbox_arg": true
         },
         "auth": {
+          "credentials_from_project": "binxin_billet",
           "username": "",
           "password": "",
           "login_timeout_ms": 30000,
@@ -462,6 +481,9 @@
             "login_button": "button:has-text(\"登录\")"
           },
           "page_settle_timeout_ms": 10000
+        },
+        "export": {
+          "archive_data_export": false
         }
       },
       "diagnostics": {
@@ -487,9 +509,9 @@
           "74": {
             "source": {
               "type": "ssh_file",
-              "host": "172.30.31.74",
+              "host": "192.0.2.74",
               "port": 22,
-              "username": "lcfc",
+              "username": "",
               "allow_unknown_host": true,
               "connect_timeout_seconds": 10,
               "command_timeout_seconds": 20,
@@ -505,9 +527,9 @@
                 "when": "ocr_empty",
                 "source": {
                   "type": "ssh_file",
-                  "host": "172.30.31.71",
+                  "host": "192.0.2.71",
                   "port": 22,
-                  "username": "lcfc",
+                  "username": "",
                   "allow_unknown_host": true,
                   "connect_timeout_seconds": 10,
                   "command_timeout_seconds": 20,
@@ -540,7 +562,7 @@
       "sink": {
         "type": "binxin_74_71_qingtui",
         "enabled": true,
-        "document_url": "https://web.qingtui.com/drive/preview/1541208802663981056",
+        "document_url": "https://web.qingtui.com/drive/preview/EXAMPLE_DOCUMENT_ID",
         "append_strategy": "spreadsheet_keyboard",
         "format": {
           "columns": [
@@ -593,7 +615,7 @@
           ]
         },
         "selectors": {
-          "sheet_name": "74-71",
+          "sheet_name": "1期-74",
           "create_sheet_if_missing": true,
           "sheet_create_timeout_seconds": 20,
           "sheet_add_button": ".sheets-add-btn-wrapper button",
@@ -614,21 +636,22 @@
     },
     {
       "id": "binxin_76",
-      "name": "镔鑫铸坯号识别（76 号盒子 / 57、59 相机）",
-      "enabled": true,
+      "name": "镔鑫铸坯号识别（76 号盒子 / 57、59 相机）（历史合并统计）",
+      "enabled": false,
       "daily_target": 50,
       "source": {
         "type": "binxin_76_history",
         "station": "76",
         "refresh_on_prepare": false,
+        "prefetch_sample_images": true,
         "easyconnect": {
           "enabled": true,
           "auto_detect": true,
           "launch_command": [],
-          "healthcheck_url": "http://172.30.37.76:3000/",
+          "healthcheck_url": "http://198.51.100.76:3000/",
           "connect_timeout_seconds": 90
         },
-        "history_url": "http://172.30.37.76:3000/#/history",
+        "history_url": "http://198.51.100.76:3000/#/history",
         "date_input_format": "%Y/%m/%d",
         "browser": {
           "channel": "chrome",
@@ -638,7 +661,7 @@
           "ignore_no_sandbox_arg": true
         },
         "auth": {
-          "login_url": "http://172.30.37.76/#/login",
+          "login_url": "http://198.51.100.76/#/login",
           "username": "",
           "password": "",
           "login_timeout_ms": 30000,
@@ -702,9 +725,9 @@
           "76": {
             "source": {
               "type": "ssh_file",
-              "host": "172.30.37.76",
+              "host": "198.51.100.76",
               "port": 22,
-              "username": "cisdi",
+              "username": "",
               "allow_unknown_host": true,
               "connect_timeout_seconds": 10,
               "command_timeout_seconds": 20,
@@ -719,7 +742,7 @@
               "before_seconds": 8,
               "after_seconds": 15,
               "boundary_sample_lines": 80,
-              "cache_window_seconds": 180,
+              "cache_window_seconds": 0,
               "cache_ttl_seconds": 300,
               "cache_max_entries": 24,
               "max_output_bytes": 8388608
@@ -734,26 +757,75 @@
       },
       "sink": {
         "type": "binxin_76_qingtui",
-        "enabled": false
+        "enabled": true,
+        "document_url": "https://web.qingtui.com/drive/preview/EXAMPLE_DOCUMENT_ID",
+        "append_strategy": "spreadsheet_keyboard",
+        "format": {
+          "columns": [
+            {
+              "field": "date",
+              "header": "日期"
+            },
+            {
+              "field": "sample_count",
+              "header": "抽样数量"
+            },
+            {
+              "field": "correct",
+              "header": "正确数量"
+            },
+            {
+              "field": "incorrect",
+              "header": "错误数量"
+            },
+            {
+              "field": "invalid",
+              "header": "无效数量"
+            },
+            {
+              "field": "accuracy",
+              "header": "准确率"
+            }
+          ],
+          "date_field": "date",
+          "date_output_format": "%Y-%m-%d",
+          "accuracy_suffix": "%"
+        },
+        "browser": {
+          "channel": "chrome",
+          "headless": false,
+          "user_data_dir": "./runtime/browser/qingtui",
+          "remote_debugging_port": 9223,
+          "browser_start_timeout_seconds": 20,
+          "allow_interactive_login": true,
+          "interactive_login_timeout_seconds": 300,
+          "post_login_settle_ms": 2500,
+          "ignore_no_sandbox_arg": true
+        },
+        "selectors": {
+          "sheet_name": "76",
+          "create_sheet_if_missing": true
+        }
       }
     },
     {
       "id": "binxin_77",
-      "name": "镔鑫铸坯号识别（77 号盒子 / 60、62 相机）",
-      "enabled": true,
+      "name": "镔鑫铸坯号识别（77 号盒子 / 60、62 相机）（历史合并统计）",
+      "enabled": false,
       "daily_target": 50,
       "source": {
         "type": "binxin_77_history",
         "station": "77",
         "refresh_on_prepare": false,
+        "prefetch_sample_images": true,
         "easyconnect": {
           "enabled": true,
           "auto_detect": true,
           "launch_command": [],
-          "healthcheck_url": "http://172.30.37.77:3000/",
+          "healthcheck_url": "http://198.51.100.77:3000/",
           "connect_timeout_seconds": 90
         },
-        "history_url": "http://172.30.37.77:3000/#/history",
+        "history_url": "http://198.51.100.77:3000/#/history",
         "date_input_format": "%Y/%m/%d",
         "browser": {
           "channel": "chrome",
@@ -763,7 +835,7 @@
           "ignore_no_sandbox_arg": true
         },
         "auth": {
-          "login_url": "http://172.30.37.77/#/login",
+          "login_url": "http://198.51.100.77/#/login",
           "username": "",
           "password": "",
           "login_timeout_ms": 30000,
@@ -827,9 +899,9 @@
           "77": {
             "source": {
               "type": "ssh_file",
-              "host": "172.30.37.77",
+              "host": "198.51.100.77",
               "port": 22,
-              "username": "cisdi",
+              "username": "",
               "allow_unknown_host": true,
               "connect_timeout_seconds": 10,
               "command_timeout_seconds": 20,
@@ -844,7 +916,7 @@
               "before_seconds": 8,
               "after_seconds": 15,
               "boundary_sample_lines": 80,
-              "cache_window_seconds": 180,
+              "cache_window_seconds": 0,
               "cache_ttl_seconds": 300,
               "cache_max_entries": 24,
               "max_output_bytes": 8388608
@@ -859,7 +931,55 @@
       },
       "sink": {
         "type": "binxin_77_qingtui",
-        "enabled": false
+        "enabled": true,
+        "document_url": "https://web.qingtui.com/drive/preview/EXAMPLE_DOCUMENT_ID",
+        "append_strategy": "spreadsheet_keyboard",
+        "format": {
+          "columns": [
+            {
+              "field": "date",
+              "header": "日期"
+            },
+            {
+              "field": "sample_count",
+              "header": "抽样数量"
+            },
+            {
+              "field": "correct",
+              "header": "正确数量"
+            },
+            {
+              "field": "incorrect",
+              "header": "错误数量"
+            },
+            {
+              "field": "invalid",
+              "header": "无效数量"
+            },
+            {
+              "field": "accuracy",
+              "header": "准确率"
+            }
+          ],
+          "date_field": "date",
+          "date_output_format": "%Y-%m-%d",
+          "accuracy_suffix": "%"
+        },
+        "browser": {
+          "channel": "chrome",
+          "headless": false,
+          "user_data_dir": "./runtime/browser/qingtui",
+          "remote_debugging_port": 9223,
+          "browser_start_timeout_seconds": 20,
+          "allow_interactive_login": true,
+          "interactive_login_timeout_seconds": 300,
+          "post_login_settle_ms": 2500,
+          "ignore_no_sandbox_arg": true
+        },
+        "selectors": {
+          "sheet_name": "77",
+          "create_sheet_if_missing": true
+        }
       }
     },
     {
@@ -901,6 +1021,7 @@
           }
         },
         "selectors": {
+          "history_ready": ".page-history",
           "start_date": "input[placeholder*=\"开始时间\"], input[placeholder*=\"开始日期\"]",
           "end_date": "input[placeholder*=\"结束时间\"], input[placeholder*=\"结束日期\"]",
           "camera_group": "input[placeholder*=\"相机分组\"], input[placeholder*=\"相机组\"], .el-form-item:has-text(\"相机分组\") .el-select, .ant-form-item:has-text(\"相机分组\") .ant-select-selector",
@@ -916,7 +1037,56 @@
         "result_export_dir": "./runtime/results/ruifeng_trolley"
       },
       "sink": {
-        "enabled": false
+        "type": "qingtui_document",
+        "enabled": true,
+        "document_url": "https://web.qingtui.com/drive/preview/EXAMPLE_DOCUMENT_ID",
+        "append_strategy": "spreadsheet_keyboard",
+        "format": {
+          "columns": [
+            {
+              "field": "date",
+              "header": "日期"
+            },
+            {
+              "field": "sample_count",
+              "header": "抽样数量"
+            },
+            {
+              "field": "correct",
+              "header": "正确数量"
+            },
+            {
+              "field": "incorrect",
+              "header": "错误数量"
+            },
+            {
+              "field": "invalid",
+              "header": "无效数量"
+            },
+            {
+              "field": "accuracy",
+              "header": "准确率"
+            }
+          ],
+          "date_field": "date",
+          "date_output_format": "%Y-%m-%d",
+          "accuracy_suffix": "%"
+        },
+        "browser": {
+          "channel": "chrome",
+          "headless": false,
+          "user_data_dir": "./runtime/browser/qingtui",
+          "remote_debugging_port": 9223,
+          "browser_start_timeout_seconds": 20,
+          "allow_interactive_login": true,
+          "interactive_login_timeout_seconds": 300,
+          "post_login_settle_ms": 2500,
+          "ignore_no_sandbox_arg": true
+        },
+        "selectors": {
+          "sheet_name": "台车",
+          "create_sheet_if_missing": true
+        }
       }
     },
     {
@@ -959,6 +1129,7 @@
           }
         },
         "selectors": {
+          "history_ready": ".page-history",
           "start_date": "input[placeholder*=\"开始时间\"], input[placeholder*=\"开始日期\"]",
           "end_date": "input[placeholder*=\"结束时间\"], input[placeholder*=\"结束日期\"]",
           "camera_group": "input[placeholder*=\"相机分组\"], input[placeholder*=\"相机组\"], .el-form-item:has-text(\"相机分组\") .el-select, .ant-form-item:has-text(\"相机分组\") .ant-select-selector",
@@ -974,7 +1145,1288 @@
         "result_export_dir": "./runtime/results/ruifeng_ladle"
       },
       "sink": {
+        "type": "qingtui_document",
+        "enabled": true,
+        "document_url": "https://web.qingtui.com/drive/preview/EXAMPLE_DOCUMENT_ID",
+        "append_strategy": "spreadsheet_keyboard",
+        "format": {
+          "columns": [
+            {
+              "field": "date",
+              "header": "日期"
+            },
+            {
+              "field": "sample_count",
+              "header": "抽样数量"
+            },
+            {
+              "field": "correct",
+              "header": "正确数量"
+            },
+            {
+              "field": "incorrect",
+              "header": "错误数量"
+            },
+            {
+              "field": "invalid",
+              "header": "无效数量"
+            },
+            {
+              "field": "accuracy",
+              "header": "准确率"
+            }
+          ],
+          "date_field": "date",
+          "date_output_format": "%Y-%m-%d",
+          "accuracy_suffix": "%"
+        },
+        "browser": {
+          "channel": "chrome",
+          "headless": false,
+          "user_data_dir": "./runtime/browser/qingtui",
+          "remote_debugging_port": 9223,
+          "browser_start_timeout_seconds": 20,
+          "allow_interactive_login": true,
+          "interactive_login_timeout_seconds": 300,
+          "post_login_settle_ms": 2500,
+          "ignore_no_sandbox_arg": true
+        },
+        "selectors": {
+          "sheet_name": "钢包",
+          "create_sheet_if_missing": true
+        }
+      }
+    },
+    {
+      "id": "binxin_cc2_outfeed",
+      "name": "镔鑫2连铸｜2#连铸出坯跨辊道ocr-南侧",
+      "enabled": true,
+      "daily_target": 50,
+      "source": {
+        "type": "binxin_phase2_history",
+        "station": "76",
+        "point_name": "2#连铸出坯跨辊道ocr-南侧",
+        "area": "2连铸",
+        "listed_url": "http://198.51.100.76/#/",
+        "base_url": "http://198.51.100.76:3000",
+        "server_origin": "http://127.0.0.1:18899",
+        "refresh_on_prepare": false,
+        "prefetch_sample_images": true,
+        "easyconnect": {
+          "enabled": true,
+          "auto_detect": true,
+          "connect_timeout_seconds": 90
+        },
+        "auth": {
+          "credentials_from_project": "binxin_76"
+        },
+        "api": {
+          "page_size": 500,
+          "max_pages": 200,
+          "request_timeout_seconds": 60
+        }
+      },
+      "diagnostics": {
         "enabled": false
+      },
+      "cache": {
+        "type": "sqlite",
+        "path": "./runtime/review.sqlite3",
+        "result_export_dir": "./runtime/results/binxin_cc2_outfeed"
+      },
+      "sink": {
+        "type": "qingtui_document",
+        "enabled": true,
+        "document_url": "https://web.qingtui.com/drive/preview/EXAMPLE_DOCUMENT_ID",
+        "append_strategy": "spreadsheet_keyboard",
+        "format": {
+          "columns": [
+            {
+              "field": "date",
+              "header": "日期"
+            },
+            {
+              "field": "sample_count",
+              "header": "抽样数量"
+            },
+            {
+              "field": "correct",
+              "header": "正确数量"
+            },
+            {
+              "field": "incorrect",
+              "header": "错误数量"
+            },
+            {
+              "field": "invalid",
+              "header": "无效数量"
+            },
+            {
+              "field": "accuracy",
+              "header": "准确率"
+            }
+          ],
+          "date_field": "date",
+          "date_output_format": "%Y-%m-%d",
+          "accuracy_suffix": "%"
+        },
+        "browser": {
+          "channel": "chrome",
+          "headless": false,
+          "user_data_dir": "./runtime/browser/qingtui",
+          "remote_debugging_port": 9223,
+          "browser_start_timeout_seconds": 20,
+          "allow_interactive_login": true,
+          "interactive_login_timeout_seconds": 300,
+          "post_login_settle_ms": 2500,
+          "ignore_no_sandbox_arg": true,
+          "login_markers": [
+            "input[type=\"password\"]",
+            "text=\"登录\"",
+            "text=扫码登录",
+            "text=扫码登录后查看",
+            "text=手机验证",
+            "text=轻推登录"
+          ]
+        },
+        "selectors": {
+          "sheet_name": "2#连铸出坯跨辊道ocr-南侧",
+          "create_sheet_if_missing": true,
+          "sheet_create_timeout_seconds": 20,
+          "sheet_add_button": ".sheet-add",
+          "sheet_rename_input": "input.sheet-name-input",
+          "edit_button_texts": [
+            "在线编辑",
+            "编辑"
+          ],
+          "editor_ready_wait_ms": 2500,
+          "editor_surface_timeout_ms": 30000,
+          "grid_focus_timeout_ms": 30000,
+          "wait_after_edit_ms": 3000,
+          "post_auth_wait_ms": 1800,
+          "paste_wait_ms": 800,
+          "save_wait_ms": 2500
+        }
+      }
+    },
+    {
+      "id": "binxin_cc2_hot",
+      "name": "镔鑫2连铸｜2连-2棒线热送辊道ocr-南",
+      "enabled": true,
+      "daily_target": 50,
+      "source": {
+        "type": "binxin_phase2_history",
+        "station": "76",
+        "point_name": "2连-2棒线热送辊道ocr-南",
+        "area": "2连铸",
+        "listed_url": "http://198.51.100.76/#/",
+        "base_url": "http://198.51.100.76:3000",
+        "server_origin": "http://127.0.0.1:18899",
+        "refresh_on_prepare": false,
+        "prefetch_sample_images": true,
+        "easyconnect": {
+          "enabled": true,
+          "auto_detect": true,
+          "connect_timeout_seconds": 90
+        },
+        "auth": {
+          "credentials_from_project": "binxin_76"
+        },
+        "api": {
+          "page_size": 500,
+          "max_pages": 200,
+          "request_timeout_seconds": 60
+        }
+      },
+      "diagnostics": {
+        "enabled": false
+      },
+      "cache": {
+        "type": "sqlite",
+        "path": "./runtime/review.sqlite3",
+        "result_export_dir": "./runtime/results/binxin_cc2_hot"
+      },
+      "sink": {
+        "type": "qingtui_document",
+        "enabled": true,
+        "document_url": "https://web.qingtui.com/drive/preview/EXAMPLE_DOCUMENT_ID",
+        "append_strategy": "spreadsheet_keyboard",
+        "format": {
+          "columns": [
+            {
+              "field": "date",
+              "header": "日期"
+            },
+            {
+              "field": "sample_count",
+              "header": "抽样数量"
+            },
+            {
+              "field": "correct",
+              "header": "正确数量"
+            },
+            {
+              "field": "incorrect",
+              "header": "错误数量"
+            },
+            {
+              "field": "invalid",
+              "header": "无效数量"
+            },
+            {
+              "field": "accuracy",
+              "header": "准确率"
+            }
+          ],
+          "date_field": "date",
+          "date_output_format": "%Y-%m-%d",
+          "accuracy_suffix": "%"
+        },
+        "browser": {
+          "channel": "chrome",
+          "headless": false,
+          "user_data_dir": "./runtime/browser/qingtui",
+          "remote_debugging_port": 9223,
+          "browser_start_timeout_seconds": 20,
+          "allow_interactive_login": true,
+          "interactive_login_timeout_seconds": 300,
+          "post_login_settle_ms": 2500,
+          "ignore_no_sandbox_arg": true,
+          "login_markers": [
+            "input[type=\"password\"]",
+            "text=\"登录\"",
+            "text=扫码登录",
+            "text=扫码登录后查看",
+            "text=手机验证",
+            "text=轻推登录"
+          ]
+        },
+        "selectors": {
+          "sheet_name": "2连-2棒线热送辊道ocr-南",
+          "create_sheet_if_missing": true,
+          "sheet_create_timeout_seconds": 20,
+          "sheet_add_button": ".sheet-add",
+          "sheet_rename_input": "input.sheet-name-input",
+          "edit_button_texts": [
+            "在线编辑",
+            "编辑"
+          ],
+          "editor_ready_wait_ms": 2500,
+          "editor_surface_timeout_ms": 30000,
+          "grid_focus_timeout_ms": 30000,
+          "wait_after_edit_ms": 3000,
+          "post_auth_wait_ms": 1800,
+          "paste_wait_ms": 800,
+          "save_wait_ms": 2500
+        }
+      }
+    },
+    {
+      "id": "binxin_cc2_cold_exit",
+      "name": "镔鑫2连铸｜2#连铸机-2#冷床-出口ocr",
+      "enabled": true,
+      "daily_target": 50,
+      "source": {
+        "type": "binxin_phase2_history",
+        "station": "71",
+        "point_name": "2#连铸机-2#冷床-出口ocr",
+        "area": "2连铸",
+        "listed_url": "http://198.51.100.71/#/",
+        "base_url": "http://198.51.100.71:3000",
+        "server_origin": "http://127.0.0.1:18899",
+        "refresh_on_prepare": false,
+        "prefetch_sample_images": true,
+        "easyconnect": {
+          "enabled": true,
+          "auto_detect": true,
+          "connect_timeout_seconds": 90
+        },
+        "auth": {
+          "credentials_from_project": "binxin_76"
+        },
+        "api": {
+          "page_size": 500,
+          "max_pages": 200,
+          "request_timeout_seconds": 60
+        }
+      },
+      "diagnostics": {
+        "enabled": false
+      },
+      "cache": {
+        "type": "sqlite",
+        "path": "./runtime/review.sqlite3",
+        "result_export_dir": "./runtime/results/binxin_cc2_cold_exit"
+      },
+      "sink": {
+        "type": "qingtui_document",
+        "enabled": true,
+        "document_url": "https://web.qingtui.com/drive/preview/EXAMPLE_DOCUMENT_ID",
+        "append_strategy": "spreadsheet_keyboard",
+        "format": {
+          "columns": [
+            {
+              "field": "date",
+              "header": "日期"
+            },
+            {
+              "field": "sample_count",
+              "header": "抽样数量"
+            },
+            {
+              "field": "correct",
+              "header": "正确数量"
+            },
+            {
+              "field": "incorrect",
+              "header": "错误数量"
+            },
+            {
+              "field": "invalid",
+              "header": "无效数量"
+            },
+            {
+              "field": "accuracy",
+              "header": "准确率"
+            }
+          ],
+          "date_field": "date",
+          "date_output_format": "%Y-%m-%d",
+          "accuracy_suffix": "%"
+        },
+        "browser": {
+          "channel": "chrome",
+          "headless": false,
+          "user_data_dir": "./runtime/browser/qingtui",
+          "remote_debugging_port": 9223,
+          "browser_start_timeout_seconds": 20,
+          "allow_interactive_login": true,
+          "interactive_login_timeout_seconds": 300,
+          "post_login_settle_ms": 2500,
+          "ignore_no_sandbox_arg": true,
+          "login_markers": [
+            "input[type=\"password\"]",
+            "text=\"登录\"",
+            "text=扫码登录",
+            "text=扫码登录后查看",
+            "text=手机验证",
+            "text=轻推登录"
+          ]
+        },
+        "selectors": {
+          "sheet_name": "2#连铸机-2#冷床-出口ocr",
+          "create_sheet_if_missing": true,
+          "sheet_create_timeout_seconds": 20,
+          "sheet_add_button": ".sheet-add",
+          "sheet_rename_input": "input.sheet-name-input",
+          "edit_button_texts": [
+            "在线编辑",
+            "编辑"
+          ],
+          "editor_ready_wait_ms": 2500,
+          "editor_surface_timeout_ms": 30000,
+          "grid_focus_timeout_ms": 30000,
+          "wait_after_edit_ms": 3000,
+          "post_auth_wait_ms": 1800,
+          "paste_wait_ms": 800,
+          "save_wait_ms": 2500
+        }
+      }
+    },
+    {
+      "id": "binxin_cc2_cold_entry",
+      "name": "镔鑫2连铸｜2连-下线坯跨辊道-2#冷床入口ocr-南侧",
+      "enabled": true,
+      "daily_target": 50,
+      "source": {
+        "type": "binxin_phase2_history",
+        "station": "76",
+        "point_name": "2连-下线坯跨辊道-2#冷床入口ocr-南侧",
+        "area": "2连铸",
+        "listed_url": "http://198.51.100.70/#/",
+        "base_url": "http://198.51.100.76:3000",
+        "server_origin": "http://127.0.0.1:18899",
+        "refresh_on_prepare": false,
+        "prefetch_sample_images": true,
+        "easyconnect": {
+          "enabled": true,
+          "auto_detect": true,
+          "connect_timeout_seconds": 90
+        },
+        "auth": {
+          "credentials_from_project": "binxin_76"
+        },
+        "api": {
+          "page_size": 500,
+          "max_pages": 200,
+          "request_timeout_seconds": 60
+        }
+      },
+      "diagnostics": {
+        "enabled": false
+      },
+      "cache": {
+        "type": "sqlite",
+        "path": "./runtime/review.sqlite3",
+        "result_export_dir": "./runtime/results/binxin_cc2_cold_entry"
+      },
+      "sink": {
+        "type": "qingtui_document",
+        "enabled": true,
+        "document_url": "https://web.qingtui.com/drive/preview/EXAMPLE_DOCUMENT_ID",
+        "append_strategy": "spreadsheet_keyboard",
+        "format": {
+          "columns": [
+            {
+              "field": "date",
+              "header": "日期"
+            },
+            {
+              "field": "sample_count",
+              "header": "抽样数量"
+            },
+            {
+              "field": "correct",
+              "header": "正确数量"
+            },
+            {
+              "field": "incorrect",
+              "header": "错误数量"
+            },
+            {
+              "field": "invalid",
+              "header": "无效数量"
+            },
+            {
+              "field": "accuracy",
+              "header": "准确率"
+            }
+          ],
+          "date_field": "date",
+          "date_output_format": "%Y-%m-%d",
+          "accuracy_suffix": "%"
+        },
+        "browser": {
+          "channel": "chrome",
+          "headless": false,
+          "user_data_dir": "./runtime/browser/qingtui",
+          "remote_debugging_port": 9223,
+          "browser_start_timeout_seconds": 20,
+          "allow_interactive_login": true,
+          "interactive_login_timeout_seconds": 300,
+          "post_login_settle_ms": 2500,
+          "ignore_no_sandbox_arg": true,
+          "login_markers": [
+            "input[type=\"password\"]",
+            "text=\"登录\"",
+            "text=扫码登录",
+            "text=扫码登录后查看",
+            "text=手机验证",
+            "text=轻推登录"
+          ]
+        },
+        "selectors": {
+          "sheet_name": "2连-下线坯跨辊道-2#冷床入口ocr-南侧",
+          "create_sheet_if_missing": true,
+          "sheet_create_timeout_seconds": 20,
+          "sheet_add_button": ".sheet-add",
+          "sheet_rename_input": "input.sheet-name-input",
+          "edit_button_texts": [
+            "在线编辑",
+            "编辑"
+          ],
+          "editor_ready_wait_ms": 2500,
+          "editor_surface_timeout_ms": 30000,
+          "grid_focus_timeout_ms": 30000,
+          "wait_after_edit_ms": 3000,
+          "post_auth_wait_ms": 1800,
+          "paste_wait_ms": 800,
+          "save_wait_ms": 2500
+        }
+      }
+    },
+    {
+      "id": "binxin_cc3_hot",
+      "name": "镔鑫3连铸｜3连-3高棒热送辊道ocr-南",
+      "enabled": true,
+      "daily_target": 50,
+      "source": {
+        "type": "binxin_phase2_history",
+        "station": "77",
+        "point_name": "3连-3高棒热送辊道ocr-南",
+        "area": "3连铸",
+        "listed_url": "http://198.51.100.77/#/",
+        "base_url": "http://198.51.100.77:3000",
+        "server_origin": "http://127.0.0.1:18899",
+        "refresh_on_prepare": false,
+        "prefetch_sample_images": true,
+        "easyconnect": {
+          "enabled": true,
+          "auto_detect": true,
+          "connect_timeout_seconds": 90
+        },
+        "auth": {
+          "credentials_from_project": "binxin_76"
+        },
+        "api": {
+          "page_size": 500,
+          "max_pages": 200,
+          "request_timeout_seconds": 60
+        }
+      },
+      "diagnostics": {
+        "enabled": false
+      },
+      "cache": {
+        "type": "sqlite",
+        "path": "./runtime/review.sqlite3",
+        "result_export_dir": "./runtime/results/binxin_cc3_hot"
+      },
+      "sink": {
+        "type": "qingtui_document",
+        "enabled": true,
+        "document_url": "https://web.qingtui.com/drive/preview/EXAMPLE_DOCUMENT_ID",
+        "append_strategy": "spreadsheet_keyboard",
+        "format": {
+          "columns": [
+            {
+              "field": "date",
+              "header": "日期"
+            },
+            {
+              "field": "sample_count",
+              "header": "抽样数量"
+            },
+            {
+              "field": "correct",
+              "header": "正确数量"
+            },
+            {
+              "field": "incorrect",
+              "header": "错误数量"
+            },
+            {
+              "field": "invalid",
+              "header": "无效数量"
+            },
+            {
+              "field": "accuracy",
+              "header": "准确率"
+            }
+          ],
+          "date_field": "date",
+          "date_output_format": "%Y-%m-%d",
+          "accuracy_suffix": "%"
+        },
+        "browser": {
+          "channel": "chrome",
+          "headless": false,
+          "user_data_dir": "./runtime/browser/qingtui",
+          "remote_debugging_port": 9223,
+          "browser_start_timeout_seconds": 20,
+          "allow_interactive_login": true,
+          "interactive_login_timeout_seconds": 300,
+          "post_login_settle_ms": 2500,
+          "ignore_no_sandbox_arg": true,
+          "login_markers": [
+            "input[type=\"password\"]",
+            "text=\"登录\"",
+            "text=扫码登录",
+            "text=扫码登录后查看",
+            "text=手机验证",
+            "text=轻推登录"
+          ]
+        },
+        "selectors": {
+          "sheet_name": "3连-3高棒热送辊道ocr-南",
+          "create_sheet_if_missing": true,
+          "sheet_create_timeout_seconds": 20,
+          "sheet_add_button": ".sheet-add",
+          "sheet_rename_input": "input.sheet-name-input",
+          "edit_button_texts": [
+            "在线编辑",
+            "编辑"
+          ],
+          "editor_ready_wait_ms": 2500,
+          "editor_surface_timeout_ms": 30000,
+          "grid_focus_timeout_ms": 30000,
+          "wait_after_edit_ms": 3000,
+          "post_auth_wait_ms": 1800,
+          "paste_wait_ms": 800,
+          "save_wait_ms": 2500
+        }
+      }
+    },
+    {
+      "id": "binxin_cc3_cold_exit",
+      "name": "镔鑫3连铸｜3#连铸机-热送坯确认点-3#冷床出口ocr",
+      "enabled": true,
+      "daily_target": 50,
+      "source": {
+        "type": "binxin_phase2_history",
+        "station": "77",
+        "point_name": "3#连铸机-热送坯确认点-3#冷床出口ocr",
+        "area": "3连铸",
+        "listed_url": "http://198.51.100.77/#/",
+        "base_url": "http://198.51.100.77:3000",
+        "server_origin": "http://127.0.0.1:18899",
+        "refresh_on_prepare": false,
+        "prefetch_sample_images": true,
+        "easyconnect": {
+          "enabled": true,
+          "auto_detect": true,
+          "connect_timeout_seconds": 90
+        },
+        "auth": {
+          "credentials_from_project": "binxin_76"
+        },
+        "api": {
+          "page_size": 500,
+          "max_pages": 200,
+          "request_timeout_seconds": 60
+        }
+      },
+      "diagnostics": {
+        "enabled": false
+      },
+      "cache": {
+        "type": "sqlite",
+        "path": "./runtime/review.sqlite3",
+        "result_export_dir": "./runtime/results/binxin_cc3_cold_exit"
+      },
+      "sink": {
+        "type": "qingtui_document",
+        "enabled": true,
+        "document_url": "https://web.qingtui.com/drive/preview/EXAMPLE_DOCUMENT_ID",
+        "append_strategy": "spreadsheet_keyboard",
+        "format": {
+          "columns": [
+            {
+              "field": "date",
+              "header": "日期"
+            },
+            {
+              "field": "sample_count",
+              "header": "抽样数量"
+            },
+            {
+              "field": "correct",
+              "header": "正确数量"
+            },
+            {
+              "field": "incorrect",
+              "header": "错误数量"
+            },
+            {
+              "field": "invalid",
+              "header": "无效数量"
+            },
+            {
+              "field": "accuracy",
+              "header": "准确率"
+            }
+          ],
+          "date_field": "date",
+          "date_output_format": "%Y-%m-%d",
+          "accuracy_suffix": "%"
+        },
+        "browser": {
+          "channel": "chrome",
+          "headless": false,
+          "user_data_dir": "./runtime/browser/qingtui",
+          "remote_debugging_port": 9223,
+          "browser_start_timeout_seconds": 20,
+          "allow_interactive_login": true,
+          "interactive_login_timeout_seconds": 300,
+          "post_login_settle_ms": 2500,
+          "ignore_no_sandbox_arg": true,
+          "login_markers": [
+            "input[type=\"password\"]",
+            "text=\"登录\"",
+            "text=扫码登录",
+            "text=扫码登录后查看",
+            "text=手机验证",
+            "text=轻推登录"
+          ]
+        },
+        "selectors": {
+          "sheet_name": "3#连铸机-热送坯确认点-3#冷床出口ocr",
+          "create_sheet_if_missing": true,
+          "sheet_create_timeout_seconds": 20,
+          "sheet_add_button": ".sheet-add",
+          "sheet_rename_input": "input.sheet-name-input",
+          "edit_button_texts": [
+            "在线编辑",
+            "编辑"
+          ],
+          "editor_ready_wait_ms": 2500,
+          "editor_surface_timeout_ms": 30000,
+          "grid_focus_timeout_ms": 30000,
+          "wait_after_edit_ms": 3000,
+          "post_auth_wait_ms": 1800,
+          "paste_wait_ms": 800,
+          "save_wait_ms": 2500
+        }
+      }
+    },
+    {
+      "id": "binxin_cc3_cold_entry",
+      "name": "镔鑫3连铸｜3连-下线坯跨辊道-3#冷床入口ocr南侧",
+      "enabled": true,
+      "daily_target": 50,
+      "source": {
+        "type": "binxin_phase2_history",
+        "station": "77",
+        "point_name": "3连-下线坯跨辊道-3#冷床入口ocr南侧",
+        "area": "3连铸",
+        "listed_url": "http://198.51.100.77/#/",
+        "base_url": "http://198.51.100.77:3000",
+        "server_origin": "http://127.0.0.1:18899",
+        "refresh_on_prepare": false,
+        "prefetch_sample_images": true,
+        "easyconnect": {
+          "enabled": true,
+          "auto_detect": true,
+          "connect_timeout_seconds": 90
+        },
+        "auth": {
+          "credentials_from_project": "binxin_76"
+        },
+        "api": {
+          "page_size": 500,
+          "max_pages": 200,
+          "request_timeout_seconds": 60
+        }
+      },
+      "diagnostics": {
+        "enabled": false
+      },
+      "cache": {
+        "type": "sqlite",
+        "path": "./runtime/review.sqlite3",
+        "result_export_dir": "./runtime/results/binxin_cc3_cold_entry"
+      },
+      "sink": {
+        "type": "qingtui_document",
+        "enabled": true,
+        "document_url": "https://web.qingtui.com/drive/preview/EXAMPLE_DOCUMENT_ID",
+        "append_strategy": "spreadsheet_keyboard",
+        "format": {
+          "columns": [
+            {
+              "field": "date",
+              "header": "日期"
+            },
+            {
+              "field": "sample_count",
+              "header": "抽样数量"
+            },
+            {
+              "field": "correct",
+              "header": "正确数量"
+            },
+            {
+              "field": "incorrect",
+              "header": "错误数量"
+            },
+            {
+              "field": "invalid",
+              "header": "无效数量"
+            },
+            {
+              "field": "accuracy",
+              "header": "准确率"
+            }
+          ],
+          "date_field": "date",
+          "date_output_format": "%Y-%m-%d",
+          "accuracy_suffix": "%"
+        },
+        "browser": {
+          "channel": "chrome",
+          "headless": false,
+          "user_data_dir": "./runtime/browser/qingtui",
+          "remote_debugging_port": 9223,
+          "browser_start_timeout_seconds": 20,
+          "allow_interactive_login": true,
+          "interactive_login_timeout_seconds": 300,
+          "post_login_settle_ms": 2500,
+          "ignore_no_sandbox_arg": true,
+          "login_markers": [
+            "input[type=\"password\"]",
+            "text=\"登录\"",
+            "text=扫码登录",
+            "text=扫码登录后查看",
+            "text=手机验证",
+            "text=轻推登录"
+          ]
+        },
+        "selectors": {
+          "sheet_name": "3连-下线坯跨辊道-3#冷床入口ocr南侧",
+          "create_sheet_if_missing": true,
+          "sheet_create_timeout_seconds": 20,
+          "sheet_add_button": ".sheet-add",
+          "sheet_rename_input": "input.sheet-name-input",
+          "edit_button_texts": [
+            "在线编辑",
+            "编辑"
+          ],
+          "editor_ready_wait_ms": 2500,
+          "editor_surface_timeout_ms": 30000,
+          "grid_focus_timeout_ms": 30000,
+          "wait_after_edit_ms": 3000,
+          "post_auth_wait_ms": 1800,
+          "paste_wait_ms": 800,
+          "save_wait_ms": 2500
+        }
+      }
+    },
+    {
+      "id": "binxin_cc4_hot",
+      "name": "镔鑫4连铸｜4#连-4高线热送辊道ocr-南侧",
+      "enabled": true,
+      "daily_target": 50,
+      "source": {
+        "type": "binxin_phase2_history",
+        "station": "69",
+        "point_name": "4#连-4高线热送辊道ocr-南侧",
+        "area": "4连铸",
+        "listed_url": "http://198.51.100.69/#/",
+        "base_url": "http://198.51.100.69:3000",
+        "server_origin": "http://127.0.0.1:18899",
+        "refresh_on_prepare": false,
+        "prefetch_sample_images": true,
+        "easyconnect": {
+          "enabled": true,
+          "auto_detect": true,
+          "connect_timeout_seconds": 90
+        },
+        "auth": {
+          "credentials_from_project": "binxin_76"
+        },
+        "api": {
+          "page_size": 500,
+          "max_pages": 200,
+          "request_timeout_seconds": 60
+        }
+      },
+      "diagnostics": {
+        "enabled": false
+      },
+      "cache": {
+        "type": "sqlite",
+        "path": "./runtime/review.sqlite3",
+        "result_export_dir": "./runtime/results/binxin_cc4_hot"
+      },
+      "sink": {
+        "type": "qingtui_document",
+        "enabled": true,
+        "document_url": "https://web.qingtui.com/drive/preview/EXAMPLE_DOCUMENT_ID",
+        "append_strategy": "spreadsheet_keyboard",
+        "format": {
+          "columns": [
+            {
+              "field": "date",
+              "header": "日期"
+            },
+            {
+              "field": "sample_count",
+              "header": "抽样数量"
+            },
+            {
+              "field": "correct",
+              "header": "正确数量"
+            },
+            {
+              "field": "incorrect",
+              "header": "错误数量"
+            },
+            {
+              "field": "invalid",
+              "header": "无效数量"
+            },
+            {
+              "field": "accuracy",
+              "header": "准确率"
+            }
+          ],
+          "date_field": "date",
+          "date_output_format": "%Y-%m-%d",
+          "accuracy_suffix": "%"
+        },
+        "browser": {
+          "channel": "chrome",
+          "headless": false,
+          "user_data_dir": "./runtime/browser/qingtui",
+          "remote_debugging_port": 9223,
+          "browser_start_timeout_seconds": 20,
+          "allow_interactive_login": true,
+          "interactive_login_timeout_seconds": 300,
+          "post_login_settle_ms": 2500,
+          "ignore_no_sandbox_arg": true,
+          "login_markers": [
+            "input[type=\"password\"]",
+            "text=\"登录\"",
+            "text=扫码登录",
+            "text=扫码登录后查看",
+            "text=手机验证",
+            "text=轻推登录"
+          ]
+        },
+        "selectors": {
+          "sheet_name": "4#连-4高线热送辊道ocr-南侧",
+          "create_sheet_if_missing": true,
+          "sheet_create_timeout_seconds": 20,
+          "sheet_add_button": ".sheet-add",
+          "sheet_rename_input": "input.sheet-name-input",
+          "edit_button_texts": [
+            "在线编辑",
+            "编辑"
+          ],
+          "editor_ready_wait_ms": 2500,
+          "editor_surface_timeout_ms": 30000,
+          "grid_focus_timeout_ms": 30000,
+          "wait_after_edit_ms": 3000,
+          "post_auth_wait_ms": 1800,
+          "paste_wait_ms": 800,
+          "save_wait_ms": 2500
+        }
+      }
+    },
+    {
+      "id": "binxin_cc4_cold_exit",
+      "name": "镔鑫4连铸｜4#连铸机-4#冷床出口ocr",
+      "enabled": true,
+      "daily_target": 50,
+      "source": {
+        "type": "binxin_phase2_history",
+        "station": "73",
+        "point_name": "4#连铸机-4#冷床出口ocr",
+        "area": "4连铸",
+        "listed_url": "http://198.51.100.73/#/",
+        "base_url": "http://198.51.100.73:3000",
+        "server_origin": "http://127.0.0.1:18899",
+        "refresh_on_prepare": false,
+        "prefetch_sample_images": true,
+        "easyconnect": {
+          "enabled": true,
+          "auto_detect": true,
+          "connect_timeout_seconds": 90
+        },
+        "auth": {
+          "credentials_from_project": "binxin_76"
+        },
+        "api": {
+          "page_size": 500,
+          "max_pages": 200,
+          "request_timeout_seconds": 60
+        }
+      },
+      "diagnostics": {
+        "enabled": false
+      },
+      "cache": {
+        "type": "sqlite",
+        "path": "./runtime/review.sqlite3",
+        "result_export_dir": "./runtime/results/binxin_cc4_cold_exit"
+      },
+      "sink": {
+        "type": "qingtui_document",
+        "enabled": true,
+        "document_url": "https://web.qingtui.com/drive/preview/EXAMPLE_DOCUMENT_ID",
+        "append_strategy": "spreadsheet_keyboard",
+        "format": {
+          "columns": [
+            {
+              "field": "date",
+              "header": "日期"
+            },
+            {
+              "field": "sample_count",
+              "header": "抽样数量"
+            },
+            {
+              "field": "correct",
+              "header": "正确数量"
+            },
+            {
+              "field": "incorrect",
+              "header": "错误数量"
+            },
+            {
+              "field": "invalid",
+              "header": "无效数量"
+            },
+            {
+              "field": "accuracy",
+              "header": "准确率"
+            }
+          ],
+          "date_field": "date",
+          "date_output_format": "%Y-%m-%d",
+          "accuracy_suffix": "%"
+        },
+        "browser": {
+          "channel": "chrome",
+          "headless": false,
+          "user_data_dir": "./runtime/browser/qingtui",
+          "remote_debugging_port": 9223,
+          "browser_start_timeout_seconds": 20,
+          "allow_interactive_login": true,
+          "interactive_login_timeout_seconds": 300,
+          "post_login_settle_ms": 2500,
+          "ignore_no_sandbox_arg": true,
+          "login_markers": [
+            "input[type=\"password\"]",
+            "text=\"登录\"",
+            "text=扫码登录",
+            "text=扫码登录后查看",
+            "text=手机验证",
+            "text=轻推登录"
+          ]
+        },
+        "selectors": {
+          "sheet_name": "4#连铸机-4#冷床出口ocr",
+          "create_sheet_if_missing": true,
+          "sheet_create_timeout_seconds": 20,
+          "sheet_add_button": ".sheet-add",
+          "sheet_rename_input": "input.sheet-name-input",
+          "edit_button_texts": [
+            "在线编辑",
+            "编辑"
+          ],
+          "editor_ready_wait_ms": 2500,
+          "editor_surface_timeout_ms": 30000,
+          "grid_focus_timeout_ms": 30000,
+          "wait_after_edit_ms": 3000,
+          "post_auth_wait_ms": 1800,
+          "paste_wait_ms": 800,
+          "save_wait_ms": 2500
+        }
+      }
+    },
+    {
+      "id": "binxin_cc5_hot_crane",
+      "name": "镔鑫5连铸｜5#连-5高线热送辊道-4#冷床入口ocr-行车吊运",
+      "enabled": true,
+      "daily_target": 50,
+      "source": {
+        "type": "binxin_phase2_history",
+        "station": "69",
+        "point_name": "5#连-5高线热送辊道-4#冷床入口ocr-行车吊运",
+        "area": "5连铸",
+        "listed_url": "http://198.51.100.73/#/",
+        "base_url": "http://198.51.100.69:3000",
+        "server_origin": "http://127.0.0.1:18899",
+        "refresh_on_prepare": false,
+        "prefetch_sample_images": true,
+        "easyconnect": {
+          "enabled": true,
+          "auto_detect": true,
+          "connect_timeout_seconds": 90
+        },
+        "auth": {
+          "credentials_from_project": "binxin_76"
+        },
+        "api": {
+          "page_size": 500,
+          "max_pages": 200,
+          "request_timeout_seconds": 60
+        }
+      },
+      "diagnostics": {
+        "enabled": false
+      },
+      "cache": {
+        "type": "sqlite",
+        "path": "./runtime/review.sqlite3",
+        "result_export_dir": "./runtime/results/binxin_cc5_hot_crane"
+      },
+      "sink": {
+        "type": "qingtui_document",
+        "enabled": true,
+        "document_url": "https://web.qingtui.com/drive/preview/EXAMPLE_DOCUMENT_ID",
+        "append_strategy": "spreadsheet_keyboard",
+        "format": {
+          "columns": [
+            {
+              "field": "date",
+              "header": "日期"
+            },
+            {
+              "field": "sample_count",
+              "header": "抽样数量"
+            },
+            {
+              "field": "correct",
+              "header": "正确数量"
+            },
+            {
+              "field": "incorrect",
+              "header": "错误数量"
+            },
+            {
+              "field": "invalid",
+              "header": "无效数量"
+            },
+            {
+              "field": "accuracy",
+              "header": "准确率"
+            }
+          ],
+          "date_field": "date",
+          "date_output_format": "%Y-%m-%d",
+          "accuracy_suffix": "%"
+        },
+        "browser": {
+          "channel": "chrome",
+          "headless": false,
+          "user_data_dir": "./runtime/browser/qingtui",
+          "remote_debugging_port": 9223,
+          "browser_start_timeout_seconds": 20,
+          "allow_interactive_login": true,
+          "interactive_login_timeout_seconds": 300,
+          "post_login_settle_ms": 2500,
+          "ignore_no_sandbox_arg": true,
+          "login_markers": [
+            "input[type=\"password\"]",
+            "text=\"登录\"",
+            "text=扫码登录",
+            "text=扫码登录后查看",
+            "text=手机验证",
+            "text=轻推登录"
+          ]
+        },
+        "selectors": {
+          "sheet_name": "5#连-5高线热送辊道-4#冷床入口ocr-行车吊运",
+          "create_sheet_if_missing": true,
+          "sheet_create_timeout_seconds": 20,
+          "sheet_add_button": ".sheet-add",
+          "sheet_rename_input": "input.sheet-name-input",
+          "edit_button_texts": [
+            "在线编辑",
+            "编辑"
+          ],
+          "editor_ready_wait_ms": 2500,
+          "editor_surface_timeout_ms": 30000,
+          "grid_focus_timeout_ms": 30000,
+          "wait_after_edit_ms": 3000,
+          "post_auth_wait_ms": 1800,
+          "paste_wait_ms": 800,
+          "save_wait_ms": 2500
+        }
+      }
+    },
+    {
+      "id": "binxin_cc5_offline",
+      "name": "镔鑫5连铸｜5#连-下线坯跨辊道ocr-南侧",
+      "enabled": true,
+      "daily_target": 50,
+      "source": {
+        "type": "binxin_phase2_history",
+        "station": "69",
+        "point_name": "5#连-下线坯跨辊道ocr-南侧",
+        "area": "5连铸",
+        "listed_url": "http://198.51.100.69/#/",
+        "base_url": "http://198.51.100.69:3000",
+        "server_origin": "http://127.0.0.1:18899",
+        "refresh_on_prepare": false,
+        "prefetch_sample_images": true,
+        "easyconnect": {
+          "enabled": true,
+          "auto_detect": true,
+          "connect_timeout_seconds": 90
+        },
+        "auth": {
+          "credentials_from_project": "binxin_76"
+        },
+        "api": {
+          "page_size": 500,
+          "max_pages": 200,
+          "request_timeout_seconds": 60
+        }
+      },
+      "diagnostics": {
+        "enabled": false
+      },
+      "cache": {
+        "type": "sqlite",
+        "path": "./runtime/review.sqlite3",
+        "result_export_dir": "./runtime/results/binxin_cc5_offline"
+      },
+      "sink": {
+        "type": "qingtui_document",
+        "enabled": true,
+        "document_url": "https://web.qingtui.com/drive/preview/EXAMPLE_DOCUMENT_ID",
+        "append_strategy": "spreadsheet_keyboard",
+        "format": {
+          "columns": [
+            {
+              "field": "date",
+              "header": "日期"
+            },
+            {
+              "field": "sample_count",
+              "header": "抽样数量"
+            },
+            {
+              "field": "correct",
+              "header": "正确数量"
+            },
+            {
+              "field": "incorrect",
+              "header": "错误数量"
+            },
+            {
+              "field": "invalid",
+              "header": "无效数量"
+            },
+            {
+              "field": "accuracy",
+              "header": "准确率"
+            }
+          ],
+          "date_field": "date",
+          "date_output_format": "%Y-%m-%d",
+          "accuracy_suffix": "%"
+        },
+        "browser": {
+          "channel": "chrome",
+          "headless": false,
+          "user_data_dir": "./runtime/browser/qingtui",
+          "remote_debugging_port": 9223,
+          "browser_start_timeout_seconds": 20,
+          "allow_interactive_login": true,
+          "interactive_login_timeout_seconds": 300,
+          "post_login_settle_ms": 2500,
+          "ignore_no_sandbox_arg": true,
+          "login_markers": [
+            "input[type=\"password\"]",
+            "text=\"登录\"",
+            "text=扫码登录",
+            "text=扫码登录后查看",
+            "text=手机验证",
+            "text=轻推登录"
+          ]
+        },
+        "selectors": {
+          "sheet_name": "5#连-下线坯跨辊道ocr-南侧",
+          "create_sheet_if_missing": true,
+          "sheet_create_timeout_seconds": 20,
+          "sheet_add_button": ".sheet-add",
+          "sheet_rename_input": "input.sheet-name-input",
+          "edit_button_texts": [
+            "在线编辑",
+            "编辑"
+          ],
+          "editor_ready_wait_ms": 2500,
+          "editor_surface_timeout_ms": 30000,
+          "grid_focus_timeout_ms": 30000,
+          "wait_after_edit_ms": 3000,
+          "post_auth_wait_ms": 1800,
+          "paste_wait_ms": 800,
+          "save_wait_ms": 2500
+        }
       }
     }
   ]

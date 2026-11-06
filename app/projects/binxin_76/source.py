@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import os
 import subprocess
 import time
-from datetime import date
+from datetime import date, datetime, time as datetime_time, timedelta
 from pathlib import Path
-from urllib.parse import unquote, urljoin, urlparse
+from urllib.parse import unquote, urljoin, urlparse, urlsplit, urlunsplit
 
 import requests
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
@@ -222,9 +223,7 @@ class Binxin76HistorySource(DataSource):
         start.wait_for(state="visible", timeout=20000)
         end.wait_for(state="visible", timeout=20000)
 
-        start.click()
         start.fill(start_text)
-        end.click()
         end.fill(end_text)
         end.press("Enter")
 
@@ -242,7 +241,9 @@ class Binxin76HistorySource(DataSource):
                 ([startSelector, endSelector, startText, endText]) => {
                   const start = document.querySelector(startSelector);
                   const end = document.querySelector(endSelector);
-                  return start?.value === startText && end?.value === endText;
+                  const normalize = value => (value || '').replaceAll('/', '-');
+                  return normalize(start?.value) === normalize(startText)
+                    && normalize(end?.value) === normalize(endText);
                 }
                 """,
                 arg=[start_selector, end_selector, start_text, end_text],
@@ -253,6 +254,240 @@ class Binxin76HistorySource(DataSource):
             page.wait_for_timeout(2500)
 
         return start_text, end_text
+
+    @staticmethod
+    def _day_bounds_ms(business_date: date) -> tuple[int, int]:
+        """Return local-browser day bounds, inclusive through the final millisecond."""
+        start = datetime.combine(business_date, datetime_time.min)
+        next_day = datetime.combine(business_date + timedelta(days=1), datetime_time.min)
+        return int(start.timestamp() * 1000), int(next_day.timestamp() * 1000) - 1
+
+    @staticmethod
+    def _request_json(request) -> dict:
+        try:
+            value = json.loads(request.post_data or "{}")
+        except (TypeError, ValueError):
+            return {}
+        return value if isinstance(value, dict) else {}
+
+    def _capture_filtered_request(self, page, business_date: date):
+        """Apply the UI filter and wait for the matching API response, not just input text."""
+        lower_time, upper_time = self._day_bounds_ms(business_date)
+        # The Element Plus input has second precision; its emitted upper bound ends in .000.
+        ui_upper_time = upper_time - 999
+        timeout_ms = int(
+            self.source.get("api", {}).get(
+                "request_timeout_ms",
+                self.source.get("export", {}).get("filter_timeout_ms", 30000) + 30000,
+            )
+        )
+
+        def matches(response) -> bool:
+            if "/v1/history/condition-query" not in response.url:
+                return False
+            body = self._request_json(response.request)
+            return (
+                body.get("lowerTime") == lower_time
+                and body.get("upperTime") == ui_upper_time
+            )
+
+        # The page fires an unfiltered query while it is opening.  Applying the
+        # date range before that request settles lets its late response overwrite
+        # the filtered table.  Wait for that initial query before changing dates.
+        self._wait_history_query_idle(page, timeout_ms)
+        try:
+            with page.expect_response(matches, timeout=timeout_ms) as response_info:
+                start_text, end_text = self._set_day_filter(page, business_date)
+        except PlaywrightTimeoutError as exc:
+            raise RuntimeError(
+                f"{business_date.isoformat()} 时间筛选请求未生效或接口响应超时"
+            ) from exc
+
+        response = response_info.value
+        if not response.ok:
+            raise RuntimeError(
+                f"时间筛选接口失败: HTTP {response.status} {response.status_text}"
+            )
+        self._wait_history_query_idle(page, timeout_ms)
+        return start_text, end_text, response
+
+    @staticmethod
+    def _wait_history_query_idle(page, timeout_ms: int) -> None:
+        """Wait until the history table has no visible Element Plus loading mask."""
+        try:
+            page.wait_for_function(
+                """
+                () => {
+                  const root = document.querySelector('.page-history');
+                  if (!root) return false;
+                  return [...root.querySelectorAll('.el-loading-mask')].every(mask => {
+                    const style = getComputedStyle(mask);
+                    const rect = mask.getBoundingClientRect();
+                    return style.display === 'none'
+                      || style.visibility === 'hidden'
+                      || style.opacity === '0'
+                      || rect.width === 0
+                      || rect.height === 0;
+                  });
+                }
+                """,
+                timeout=timeout_ms,
+            )
+        except PlaywrightTimeoutError as exc:
+            raise RuntimeError("历史数据查询未完成，无法安全应用时间窗口") from exc
+
+    @staticmethod
+    def _api_headers(request) -> dict[str, str]:
+        """Copy only non-secret headers; the browser context supplies its own cookies."""
+        available = request.all_headers()
+        names = ("accept", "content-type", "origin", "referer", "x-server-origin")
+        return {name: available[name] for name in names if available.get(name)}
+
+    def _api_record_to_item(
+        self,
+        record: dict,
+        business_date: date,
+        page_no: int,
+        row_no: int,
+    ) -> SourceItem | None:
+        try:
+            acc_time = int(record.get("accTime"))
+        except (TypeError, ValueError):
+            return None
+
+        lower_time, upper_time = self._day_bounds_ms(business_date)
+        if not lower_time <= acc_time <= upper_time:
+            raise RuntimeError(
+                f"接口返回了目标日期之外的记录: id={record.get('id')}, accTime={acc_time}"
+            )
+
+        image_url = str(
+            record.get("identifyFullUrl") or record.get("identifyPictureUrl") or ""
+        ).strip()
+        if not image_url:
+            return None
+
+        timestamp = datetime.fromtimestamp(acc_time / 1000).strftime("%Y/%m/%d %H:%M:%S")
+        recognition = str(record.get("identifyBilletNumber") or "").strip()
+        basename = Path(unquote(urlparse(image_url).path)).name
+        record_id = record.get("id")
+        if record_id is not None:
+            source_key = f"{self.source.get('station', 'edge')}_{record_id}"
+        else:
+            key_material = f"{timestamp}|{basename}|{recognition}|{image_url}"
+            digest = hashlib.sha1(key_material.encode("utf-8")).hexdigest()[:16]
+            source_key = f"{timestamp.replace('/', '').replace(':', '').replace(' ', '_')}_{digest}"
+
+        return SourceItem(
+            source_key=source_key,
+            recognition_text=recognition,
+            image_url=image_url,
+            metadata={
+                "timestamp": timestamp,
+                "station": self.source.get("station"),
+                "sequence": (page_no - 1)
+                * int(self.source.get("api", {}).get("page_size", 500))
+                + row_no,
+                "recognition_type": record.get("identifyTypeEnum") or "",
+                "recognition": recognition,
+                "recognition_method": record.get("identifyMethodEnum") or "",
+                "manual_review_value": record.get("artificialCheckNumber") or "",
+                "review_type": record.get("needCheck") or "",
+                "recognition_status": record.get("identifyStatusEnum") or "",
+                "image_url": image_url,
+                "image_name": basename,
+                "record_id": record_id,
+                "camera_id": record.get("cameraId") or "",
+                "source_page": page_no,
+                "source_row": row_no,
+            },
+        )
+
+    def _fetch_filtered_api_items(self, page, business_date: date):
+        """Fetch every filtered record through the authenticated API, bypassing DOM paging."""
+        start_text, end_text, filtered_response = self._capture_filtered_request(
+            page, business_date
+        )
+        request = filtered_response.request
+        parts = urlsplit(request.url)
+        endpoint = urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+        headers = self._api_headers(request)
+        body = self._request_json(request)
+        lower_time, upper_time = self._day_bounds_ms(business_date)
+        now_ms = int(time.time() * 1000)
+        if lower_time <= now_ms <= upper_time:
+            # Freeze an in-progress business day so new rows cannot shift later pages.
+            upper_time = now_ms
+        body["lowerTime"] = lower_time
+        body["upperTime"] = upper_time
+
+        api_cfg = self.source.get("api", {})
+        page_size = int(api_cfg.get("page_size", 500))
+        request_timeout_ms = int(api_cfg.get("request_timeout_ms", 60000))
+        max_pages = int(self.source.get("pagination", {}).get("max_pages", 200))
+        if page_size < 1:
+            raise RuntimeError("source.api.page_size 必须大于 0")
+
+        all_items: list[SourceItem] = []
+        seen_keys: set[str] = set()
+        page_no = 1
+        total_pages = 1
+        expected_count: int | None = None
+
+        while page_no <= total_pages:
+            if page_no > max_pages:
+                raise RuntimeError(f"API 分页超过 max_pages={max_pages}，为避免死循环已停止")
+            response = page.context.request.post(
+                endpoint,
+                params={
+                    "currPage": page_no,
+                    "pageSize": page_size,
+                    "sort": "accTime,descending",
+                },
+                data=body,
+                headers=headers,
+                timeout=request_timeout_ms,
+            )
+            if not response.ok:
+                raise RuntimeError(
+                    f"历史数据第 {page_no} 页拉取失败: "
+                    f"HTTP {response.status} {response.status_text}"
+                )
+
+            envelope = response.json()
+            payload = envelope.get("data") if isinstance(envelope, dict) else None
+            if not isinstance(payload, dict):
+                raise RuntimeError(f"历史数据第 {page_no} 页返回格式错误")
+            records = payload.get("data") or []
+            if not isinstance(records, list):
+                raise RuntimeError(f"历史数据第 {page_no} 页 records 格式错误")
+
+            if expected_count is None:
+                expected_count = int(payload.get("rowCount") or 0)
+                total_pages = max(1, (expected_count + page_size - 1) // page_size)
+                if total_pages > max_pages:
+                    raise RuntimeError(
+                        f"API 需要 {total_pages} 页，超过 max_pages={max_pages}"
+                    )
+
+            before_count = len(all_items)
+            for row_no, record in enumerate(records, start=1):
+                if not isinstance(record, dict):
+                    continue
+                item = self._api_record_to_item(record, business_date, page_no, row_no)
+                if item and item.source_key not in seen_keys:
+                    seen_keys.add(item.source_key)
+                    all_items.append(item)
+
+            if records and len(all_items) == before_count:
+                raise RuntimeError(f"历史数据第 {page_no} 页与前页完全重复")
+            page_no += 1
+
+        if expected_count is not None and len(all_items) != expected_count:
+            raise RuntimeError(
+                f"历史数据拉取不完整: 接口报告 {expected_count} 条，实际有效 {len(all_items)} 条"
+            )
+        return start_text, end_text, all_items
 
     def _download_data_export(self, page, business_date: date) -> Path | None:
         export_cfg = self.source.get("export", {})
@@ -483,10 +718,10 @@ class Binxin76HistorySource(DataSource):
                 page = context.pages[0] if context.pages else context.new_page()
                 self._open_history_page(page)
 
-                start_text, end_text = self._set_day_filter(page, business_date)
-                page.wait_for_timeout(int(self.source.get("export", {}).get("wait_after_filter_ms", 1500)))
+                start_text, end_text, items = self._fetch_filtered_api_items(
+                    page, business_date
+                )
                 archive = self._download_data_export(page, business_date)
-                items = self._scrape_all_pages(page)
 
                 for item in items:
                     item.metadata["filter_start"] = start_text

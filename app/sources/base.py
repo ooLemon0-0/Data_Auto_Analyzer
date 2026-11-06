@@ -8,6 +8,9 @@ from app.core.models import SourceItem
 
 
 class DataSource(ABC):
+    parallel_image_downloads = False
+    image_cache_revision = ""
+
     def __init__(self, project_config: dict):
         self.config = project_config
 

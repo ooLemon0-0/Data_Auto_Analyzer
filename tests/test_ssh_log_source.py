@@ -1,7 +1,9 @@
 from datetime import datetime
 from types import SimpleNamespace
 
-from app.diagnostics.sources.ssh_file import SSHFileLogSource
+import pytest
+
+from app.diagnostics.sources.ssh_file import LogSourceError, SSHFileLogSource
 
 
 class _Stream:
@@ -10,6 +12,37 @@ class _Stream:
 
     def read(self, _limit=None):
         return self.value
+
+
+class _Channel:
+    def __init__(self):
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+    def recv_exit_status(self):
+        return 0
+
+
+class _FetchStream(_Stream):
+    def __init__(self, value: bytes):
+        super().__init__(value)
+        self.channel = _Channel()
+
+
+class _FetchClient:
+    def __init__(self, value: bytes):
+        self.value = value
+        self.commands = []
+        self.closed = False
+
+    def exec_command(self, command, timeout=None):
+        self.commands.append(command)
+        return None, _FetchStream(self.value), _FetchStream(b"")
+
+    def close(self):
+        self.closed = True
 
 
 class _SFTP:
@@ -174,3 +207,63 @@ def test_cache_does_not_cross_host_or_uncovered_time():
         datetime(2026, 8, 24, 21, 0, 0),
         datetime(2026, 8, 24, 21, 0, 20),
     ) is None
+
+
+def test_fetch_bounds_remote_output_before_reading_stderr(monkeypatch):
+    source = SSHFileLogSource(
+        {
+            "host": "box-c",
+            "port": 22,
+            "username": "user",
+            "command_timeout_seconds": 20,
+            "log": {
+                "path": "/logs/app.log",
+                "encoding": "utf-8",
+                "cache_window_seconds": 0,
+                "cache_ttl_seconds": 0,
+                "max_output_bytes": 1024,
+            },
+        }
+    )
+    client = _FetchClient(b"[2026-08-24 20:34:04] event\n")
+    monkeypatch.setattr(source, "_connect", lambda: client)
+    monkeypatch.setattr(
+        source, "_select_log_paths", lambda *_args: ["/logs/app.log"]
+    )
+
+    chunk = source.fetch(
+        datetime(2026, 8, 24, 20, 34, 3),
+        datetime(2026, 8, 24, 20, 34, 26),
+    )
+
+    assert "bash -o pipefail" in client.commands[0]
+    assert "head -c 1025" in client.commands[0]
+    assert "event" in chunk.raw_text
+    assert client.closed is True
+
+
+def test_fetch_reports_output_limit_without_waiting_for_stderr(monkeypatch):
+    source = SSHFileLogSource(
+        {
+            "host": "box-d",
+            "port": 22,
+            "username": "user",
+            "log": {
+                "path": "/logs/app.log",
+                "cache_window_seconds": 0,
+                "cache_ttl_seconds": 0,
+                "max_output_bytes": 8,
+            },
+        }
+    )
+    client = _FetchClient(b"123456789")
+    monkeypatch.setattr(source, "_connect", lambda: client)
+    monkeypatch.setattr(
+        source, "_select_log_paths", lambda *_args: ["/logs/app.log"]
+    )
+
+    with pytest.raises(LogSourceError, match="超过安全上限"):
+        source.fetch(
+            datetime(2026, 8, 24, 20, 34, 3),
+            datetime(2026, 8, 24, 20, 34, 26),
+        )

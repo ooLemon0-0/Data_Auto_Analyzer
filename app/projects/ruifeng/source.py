@@ -20,6 +20,9 @@ except ImportError:  # Reported explicitly when a Ruifeng source is used.
 
 from app.core.models import SourceItem
 from app.sources.base import DataSource
+from app.core.http import http_get
+from app.core.cancellation import check_cancelled
+from app.core.progress import report_progress
 
 
 class RuifengHistorySource(DataSource):
@@ -122,7 +125,7 @@ class RuifengHistorySource(DataSource):
             self._proxy_config().get("healthcheck_url") or self.source["history_url"]
         )
         try:
-            response = requests.get(
+            response = http_get(
                 healthcheck_url,
                 proxies=self._requests_proxies(),
                 timeout=timeout,
@@ -224,17 +227,26 @@ class RuifengHistorySource(DataSource):
                 continue
         return ""
 
+    @staticmethod
+    def _is_login_transition_notice(value: str) -> bool:
+        """The SPA briefly reports its pre-login history request as a 401."""
+        compact = re.sub(r"\s+", "", value or "")
+        return "当前会话未登录" in compact or (
+            "401" in compact and "会话" in compact and "登录" in compact
+        )
+
     def _wait_for_login_result(self, page, timeout_ms: int) -> None:
         deadline = time.monotonic() + timeout_ms / 1000
         while time.monotonic() < deadline:
+            check_cancelled()
             if not self._is_login_page(page):
                 return
             error_text = self._login_error_text(page)
-            if error_text:
+            if error_text and not self._is_login_transition_notice(error_text):
                 raise RuntimeError(f"瑞丰网站登录失败：{error_text}")
             page.wait_for_timeout(250)
         error_text = self._login_error_text(page)
-        if error_text:
+        if error_text and not self._is_login_transition_notice(error_text):
             raise RuntimeError(f"瑞丰网站登录失败：{error_text}")
         raise RuntimeError("瑞丰网站登录后页面未跳转，请检查账号、密码及登录接口。")
 
@@ -294,6 +306,44 @@ class RuifengHistorySource(DataSource):
         login_button.click()
         self._wait_for_login_result(page, timeout_ms)
         page.goto(self.source["history_url"], wait_until="domcontentloaded", timeout=60000)
+
+    def _wait_history_ready(self, page) -> None:
+        """Wait for the mounted history view and recover once from a stale SPA tab."""
+        ready_selector = self._selector("history_ready", ".page-history")
+        timeout_ms = int(
+            self.source.get("browser", {}).get("page_ready_timeout_ms", 30000)
+        )
+        last_error = None
+        for attempt in range(2):
+            try:
+                page.locator(ready_selector).first.wait_for(
+                    state="visible", timeout=timeout_ms
+                )
+                return
+            except PlaywrightTimeoutError as exc:
+                last_error = exc
+                if attempt:
+                    break
+                # A persisted tab can retain an expired-token state where Vue
+                # leaves body hidden without redirecting to /login. One clean
+                # reload lets the router redirect and normal login run again.
+                page.reload(wait_until="domcontentloaded", timeout=60000)
+                self._ensure_site_login(page)
+
+        body_state = "unknown"
+        try:
+            body_state = page.locator("body").evaluate(
+                """element => {
+                  const style = getComputedStyle(element);
+                  return `display=${style.display}, visibility=${style.visibility}, opacity=${style.opacity}`;
+                }"""
+            )
+        except Exception:
+            pass
+        raise RuntimeError(
+            "瑞丰历史页未完成渲染："
+            f"url={page.url}，selector={ready_selector!r}，body={body_state}"
+        ) from last_error
 
     # ------------------------------------------------------------------
     # Filters
@@ -594,11 +644,13 @@ class RuifengHistorySource(DataSource):
         result: list[SourceItem] = []
         seen: set[str] = set()
         for _ in range(max_pages):
+            check_cancelled()
             page_no = self._active_page(page)
             for item in self._scrape_current_page(page, camera_group, page_no):
                 if item.source_key not in seen:
                     seen.add(item.source_key)
                     result.append(item)
+            report_progress("records", f"{camera_group} · 已读取 {len(result)} 条记录", len(result), None)
 
             next_button = self._first_visible(page, next_selector)
             if next_button is None or self._disabled(next_button):
@@ -608,6 +660,7 @@ class RuifengHistorySource(DataSource):
             next_button.click()
             deadline = time.monotonic() + change_timeout_ms / 1000
             while time.monotonic() < deadline:
+                check_cancelled()
                 page.wait_for_timeout(250)
                 if (
                     self._active_page(page) != before_page
@@ -623,16 +676,18 @@ class RuifengHistorySource(DataSource):
         return result
 
     def fetch_day(self, business_date: date) -> list[SourceItem]:
+        check_cancelled()
         self._ensure_route()
+        check_cancelled()
         with sync_playwright() as playwright:
             context, page = self._open_history_page(playwright)
             try:
-                ready_selector = self._selector("history_ready", "body")
-                page.locator(ready_selector).first.wait_for(state="visible", timeout=30000)
+                self._wait_history_ready(page)
                 start_text, end_text = self._set_day_filter(page, business_date)
 
                 result: list[SourceItem] = []
                 for camera_group in self.camera_groups:
+                    report_progress("records", f"正在读取分组：{camera_group}")
                     self._select_camera_group(page, camera_group)
                     self._submit_filter(page)
                     for item in self._scrape_all_pages(page, camera_group):
@@ -673,7 +728,9 @@ class RuifengHistorySource(DataSource):
                 f"content-type={content_type or '<empty>'}, size={len(data)}"
             )
         temporary = destination.with_suffix(destination.suffix + ".part")
+        check_cancelled()
         temporary.write_bytes(data)
+        check_cancelled()
         temporary.replace(destination)
         return destination
 
@@ -703,7 +760,7 @@ class RuifengHistorySource(DataSource):
         }
         request_error: Exception | None = None
         try:
-            response = requests.get(
+            response = http_get(
                 image_url,
                 headers=headers,
                 proxies=self._requests_proxies(),
@@ -718,6 +775,7 @@ class RuifengHistorySource(DataSource):
         except Exception as exc:
             request_error = exc
 
+        check_cancelled()
         with sync_playwright() as playwright:
             context, _page = self._open_history_page(playwright)
             try:

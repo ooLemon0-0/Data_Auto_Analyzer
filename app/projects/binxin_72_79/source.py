@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import os
 import subprocess
 import time
-from datetime import date
+from datetime import date, datetime, time as datetime_time, timedelta, timezone
 from pathlib import Path
-from urllib.parse import unquote, urljoin, urlparse
+from urllib.parse import unquote, urljoin, urlparse, urlsplit, urlunsplit
 
 import requests
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
@@ -16,10 +17,14 @@ from playwright.sync_api import sync_playwright
 from app.core.config import settings
 from app.core.models import SourceItem
 from app.sources.base import DataSource
+from app.core.http import http_get
+from app.core.cancellation import check_cancelled, cancel_pause
 
 
 class Binxin7279HistorySource(DataSource):
     """EasyConnect -> 镔鑫 history -> 当天记录元数据 -> 延迟缓存图片。"""
+
+    parallel_image_downloads = True
 
     def __init__(self, project_config: dict):
         super().__init__(project_config)
@@ -31,7 +36,7 @@ class Binxin7279HistorySource(DataSource):
     # ------------------------------------------------------------------
     def _probe(self, url: str) -> bool:
         try:
-            response = requests.get(url, timeout=3)
+            response = http_get(url, timeout=3)
             return response.status_code < 500
         except Exception:
             return False
@@ -57,6 +62,7 @@ class Binxin7279HistorySource(DataSource):
         return []
 
     def _ensure_easyconnect(self) -> None:
+        check_cancelled()
         ec = self.source.get("easyconnect", {})
         if not ec.get("enabled", True):
             return
@@ -65,6 +71,7 @@ class Binxin7279HistorySource(DataSource):
         if self._probe(url):
             return
 
+        check_cancelled()
         command = self._easyconnect_command()
         if command:
             subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -74,7 +81,7 @@ class Binxin7279HistorySource(DataSource):
         while time.time() < deadline:
             if self._probe(url):
                 return
-            time.sleep(2)
+            cancel_pause(2)
 
         command_hint = command[0] if command else "未找到 EasyConnect 可执行文件，请在 config 中填写 launch_command"
         raise RuntimeError(
@@ -93,7 +100,17 @@ class Binxin7279HistorySource(DataSource):
     # ------------------------------------------------------------------
     def _credential(self, key: str) -> str:
         auth = self.source.get("auth", {})
-        return str(auth.get(key, "")).strip()
+        configured = str(auth.get(key) or "").strip()
+        if configured:
+            return configured
+        reference = str(auth.get("credentials_from_project", "binxin_billet") or "").strip()
+        if not reference:
+            return ""
+        try:
+            inherited = settings.project(reference).source.get("auth", {})
+        except KeyError as exc:
+            raise RuntimeError(f"网站登录凭据引用的项目不存在: {reference}") from exc
+        return str(inherited.get(key) or "").strip()
 
     def _is_login_page(self, page) -> bool:
         selectors = self.source.get("auth", {}).get("selectors", {})
@@ -424,31 +441,156 @@ class Binxin7279HistorySource(DataSource):
 
         return all_items
 
-    def fetch_day(self, business_date: date) -> list[SourceItem]:
-        self._ensure_easyconnect()
-        with sync_playwright() as p:
-            context = self._launch_context(p)
+    @staticmethod
+    def _day_bounds_ms(business_date: date) -> tuple[int, int]:
+        # Site timestamps and the business calendar use China Standard Time.
+        china = timezone(timedelta(hours=8))
+        start = datetime.combine(business_date, datetime_time.min, tzinfo=china)
+        end = start + timedelta(days=1)
+        return int(start.timestamp() * 1000), int(end.timestamp() * 1000) - 1
+
+    def _api_record_to_item(
+        self, record: dict, business_date: date, page_no: int, row_no: int
+    ) -> SourceItem:
+        lower, upper = self._day_bounds_ms(business_date)
+        try:
+            acc_time = int(record["accTime"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RuntimeError("历史接口记录缺少有效采集时间") from exc
+        if not lower <= acc_time <= upper:
+            raise RuntimeError("历史接口返回了目标日期之外的记录")
+        # Keep the same review image and source key as the existing DOM source.
+        image_url = str(record.get("identifyPictureUrl") or record.get("identifyFullUrl") or "").strip()
+        if not image_url:
+            raise RuntimeError("历史接口记录缺少识别图片")
+        china = timezone(timedelta(hours=8))
+        timestamp = datetime.fromtimestamp(acc_time / 1000, china).strftime("%Y/%m/%d %H:%M:%S")
+        recognition = str(record.get("identifyBilletNumber") or "").strip()
+        basename = Path(unquote(urlparse(image_url).path)).name
+        key_material = f"{timestamp}|{basename}|{recognition}|{image_url}"
+        digest = hashlib.sha1(key_material.encode("utf-8")).hexdigest()[:16]
+        source_key = f"{timestamp.replace('/', '').replace(':', '').replace(' ', '_')}_{digest}"
+        return SourceItem(
+            source_key=source_key,
+            recognition_text=recognition,
+            image_url=image_url,
+            metadata={
+                "timestamp": timestamp,
+                "station": self.source.get("station", "72"),
+                "recognition_type": record.get("identifyTypeEnum") or "",
+                "recognition": recognition,
+                "true_value": record.get("identifyBilletNumberReal") or "",
+                "manual_review_value": record.get("artificialCheckNumber") or "",
+                "unrecognized_reason": record.get("reasonNotIdentify") or "",
+                "recognition_status": record.get("identifyStatusEnum") or "",
+                "image_url": image_url,
+                "image_name": basename,
+                "original_image_url": record.get("identifyFullUrl") or "",
+                "record_id": record.get("id"),
+                "source_page": page_no,
+                "source_row": row_no,
+            },
+        )
+
+    def _fetch_filtered_api_items(self, page, business_date: date):
+        lower, upper = self._day_bounds_ms(business_date)
+        api_cfg = self.source.get("api", {})
+        timeout_ms = int(api_cfg.get("request_timeout_ms", 60000))
+        page_size = int(api_cfg.get("page_size", 500))
+        max_pages = int(self.source.get("pagination", {}).get("max_pages", 200))
+        if page_size < 1:
+            raise ValueError("source.api.page_size 必须大于 0")
+
+        def wait_idle():
+            page.wait_for_function(
+                """() => {
+                  const root = document.querySelector('.history');
+                  return root && [...root.querySelectorAll('.el-loading-mask')].every(mask => {
+                    const style = getComputedStyle(mask);
+                    const rect = mask.getBoundingClientRect();
+                    return style.display === 'none' || style.visibility === 'hidden'
+                      || style.opacity === '0' || rect.width === 0 || rect.height === 0;
+                  });
+                }""",
+                timeout=timeout_ms,
+            )
+
+        def matches(response):
+            if "/v1/history/condition-query" not in response.url:
+                return False
             try:
-                page = context.pages[0] if context.pages else context.new_page()
-                page.goto(self.source["history_url"], wait_until="domcontentloaded", timeout=60000)
-                self._ensure_site_login(page)
-                page.locator(".history").wait_for(state="visible", timeout=30000)
+                body = json.loads(response.request.post_data or "{}")
+                return body.get("lowerTime") == lower and body.get("upperTime") == upper - 999
+            except (TypeError, ValueError, AttributeError):
+                return False
 
+        # Let the opening query settle before applying another time window.
+        wait_idle()
+        try:
+            with page.expect_response(matches, timeout=timeout_ms) as captured:
                 start_text, end_text = self._set_day_filter(page, business_date)
-                page.wait_for_timeout(int(self.source.get("export", {}).get("wait_after_filter_ms", 1500)))
-                archive = self._download_data_export(page, business_date)
-                items = self._scrape_all_pages(page)
+        except PlaywrightTimeoutError as exc:
+            raise RuntimeError(f"{business_date.isoformat()} 时间筛选请求未生效或接口响应超时") from exc
+        response = captured.value
+        if not response.ok:
+            raise RuntimeError(f"历史时间筛选失败: HTTP {response.status}")
+        wait_idle()
+        request = response.request
+        parts = urlsplit(request.url)
+        endpoint = urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+        body = json.loads(request.post_data or "{}")
+        now_ms = int(time.time() * 1000)
+        body.update(lowerTime=lower, upperTime=min(upper, now_ms) if lower <= now_ms <= upper else upper)
+        available = request.all_headers()
+        # BrowserContext supplies the authenticated cookies without logging them.
+        headers = {
+            name: available[name]
+            for name in ("accept", "content-type", "origin", "referer", "x-server-origin")
+            if available.get(name)
+        }
+        items: list[SourceItem] = []
+        seen: set[str] = set()
+        page_no, total_pages, expected = 1, 1, None
+        while page_no <= total_pages:
+            result = page.context.request.post(
+                endpoint,
+                params={"currPage": page_no, "pageSize": page_size, "sort": "accTime,descending"},
+                data=body,
+                headers=headers,
+                timeout=timeout_ms,
+            )
+            if not result.ok:
+                raise RuntimeError(f"历史数据第 {page_no} 页拉取失败: HTTP {result.status}")
+            envelope = result.json()
+            payload = envelope.get("data") if isinstance(envelope, dict) else None
+            if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+                raise RuntimeError(f"历史数据第 {page_no} 页返回格式错误")
+            count = payload.get("rowCount")
+            if not isinstance(count, int) or count < 0:
+                raise RuntimeError("历史接口缺少有效记录总数")
+            if expected is None:
+                expected = count
+                total_pages = max(1, (expected + page_size - 1) // page_size)
+                if total_pages > max_pages:
+                    raise RuntimeError(f"API 需要 {total_pages} 页，超过 max_pages={max_pages}")
+            elif count != expected:
+                raise RuntimeError("历史数据总数在分页期间发生变化，请重新拉取")
+            for row_no, record in enumerate(payload["data"], 1):
+                if not isinstance(record, dict):
+                    raise RuntimeError("历史接口记录格式错误")
+                item = self._api_record_to_item(record, business_date, page_no, row_no)
+                if item.source_key in seen:
+                    raise RuntimeError(f"历史数据第 {page_no} 页包含重复记录")
+                seen.add(item.source_key)
+                items.append(item)
+            page_no += 1
+        if len(items) != expected:
+            raise RuntimeError(f"历史数据拉取不完整: 接口报告 {expected} 条，实际有效 {len(items)} 条")
+        return start_text, end_text, items
 
-                for item in items:
-                    item.metadata["filter_start"] = start_text
-                    item.metadata["filter_end"] = end_text
-                    item.metadata["data_export_archive"] = str(archive) if archive else ""
-
-                if not items:
-                    raise RuntimeError(f"{business_date.isoformat()} 没有抓到可审核记录")
-                return items
-            finally:
-                context.close()
+    def fetch_day(self, business_date: date) -> list[SourceItem]:
+        from app.sources.billet_http import fetch_day
+        return fetch_day(self, business_date)
 
     @staticmethod
     def _detect_image_type(data: bytes) -> str | None:
@@ -507,7 +649,9 @@ class Binxin7279HistorySource(DataSource):
                 f"head={head!r}"
             )
 
+        check_cancelled()
         tmp.write_bytes(data)
+        check_cancelled()
         tmp.replace(destination)
         return destination
 
@@ -515,134 +659,5 @@ class Binxin7279HistorySource(DataSource):
     # Lazy image cache: only sampled/reviewed images are downloaded.
     # ------------------------------------------------------------------
     def materialize_image(self, image_url: str, destination: Path) -> Path:
-        """
-        将远端图片缓存到本地。
-
-        下载优先级：
-        1. 普通 requests（镔鑫 19000 图片服务当前可直接访问）
-        2. 如果失败，再使用已登录的 Chrome persistent context 请求
-
-        注意：镔鑫图片服务把 JPEG 以 application/octet-stream 返回，
-        所以两条链路都通过 magic bytes 判断图片，而不再要求 image/* MIME。
-        """
-        destination = Path(destination)
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        tmp = destination.with_suffix(destination.suffix + ".part")
-
-        # 清理上次异常退出遗留的临时文件。
-        try:
-            if tmp.exists():
-                tmp.unlink()
-        except OSError:
-            pass
-
-        # data:image/...;base64,...
-        if image_url.startswith("data:"):
-            try:
-                header, encoded = image_url.split(",", 1)
-                if ";base64" in header:
-                    data = base64.b64decode(encoded)
-                else:
-                    data = unquote(encoded).encode("utf-8")
-
-                content_type = (
-                    header[5:].split(";", 1)[0].strip().lower()
-                    if header.startswith("data:")
-                    else ""
-                )
-                return self._save_image_bytes(
-                    data=data,
-                    content_type=content_type,
-                    destination=destination,
-                    tmp=tmp,
-                )
-            except Exception as exc:
-                raise RuntimeError(f"内嵌图片解析失败: {exc}") from exc
-
-        headers = {
-            "Referer": self.source["history_url"],
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            ),
-        }
-
-        request_error: Exception | None = None
-
-        # --------------------------------------------------------------
-        # 1. Direct requests
-        # --------------------------------------------------------------
-        try:
-            response = requests.get(
-                image_url,
-                headers=headers,
-                timeout=30,
-            )
-            response.raise_for_status()
-
-            content_type = (response.headers.get("content-type") or "").lower()
-            data = response.content
-
-            return self._save_image_bytes(
-                data=data,
-                content_type=content_type,
-                destination=destination,
-                tmp=tmp,
-            )
-        except Exception as exc:
-            request_error = exc
-            try:
-                if tmp.exists():
-                    tmp.unlink()
-            except OSError:
-                pass
-
-        # --------------------------------------------------------------
-        # 2. Browser fallback
-        # --------------------------------------------------------------
-        with sync_playwright() as p:
-            context = self._launch_context(p)
-            try:
-                page = context.pages[0] if context.pages else context.new_page()
-                page.goto(
-                    self.source["history_url"],
-                    wait_until="domcontentloaded",
-                    timeout=60000,
-                )
-                self._ensure_site_login(page)
-
-                response = context.request.get(
-                    image_url,
-                    headers=headers,
-                    timeout=30000,
-                )
-                if not response.ok:
-                    raise RuntimeError(
-                        f"HTTP {response.status}: {response.status_text}"
-                    )
-
-                content_type = (response.headers.get("content-type") or "").lower()
-                data = response.body()
-
-                return self._save_image_bytes(
-                    data=data,
-                    content_type=content_type,
-                    destination=destination,
-                    tmp=tmp,
-                )
-            except Exception as browser_error:
-                try:
-                    if tmp.exists():
-                        tmp.unlink()
-                except OSError:
-                    pass
-
-                raise RuntimeError(
-                    f"图片缓存失败: {image_url}; "
-                    f"requests={request_error}; "
-                    f"chrome={browser_error}"
-                ) from browser_error
-            finally:
-                context.close()
-
+        from app.sources.billet_http import materialize_image
+        return materialize_image(self, image_url, destination)

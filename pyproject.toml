@@ -18,7 +18,15 @@ dependencies = [
     "python-multipart==0.0.20",
     "pyperclip==1.9.0",
     "paramiko==3.5.1",
+    "Pillow==12.3.0",
 ]
 
 [tool.setuptools.packages.find]
 include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[project.optional-dependencies]
+desktop = ["Pillow==12.3.0", "PySide6-Essentials==6.10.2"]
+bundle = ["Pillow==12.3.0", "PySide6-Essentials==6.10.2", "pyinstaller==6.22.3"]

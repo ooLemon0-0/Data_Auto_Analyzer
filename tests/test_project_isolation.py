@@ -26,6 +26,7 @@ from app.projects.binxin_77.diagnostics.resolver import Binxin77Resolver
 from app.projects.binxin_77.sink import Binxin77QingTuiSink
 from app.projects.binxin_77.source import Binxin77HistorySource
 from app.projects.ruifeng.source import RuifengHistorySource
+from app.sinks.qingtui_document import QingTuiDocumentSink
 
 
 def _project(source_type: str, sink_type: str) -> dict:
@@ -64,6 +65,11 @@ def test_ruifeng_source_is_registered_without_reusing_binxin_business_logic():
     source = build_source(project)
     assert isinstance(source, RuifengHistorySource)
     assert not isinstance(source, Binxin7384HistorySource)
+
+
+def test_generic_qingtui_sink_is_available_for_ruifeng_projects():
+    sink = build_sink({"sink": {"type": "qingtui_document"}})
+    assert type(sink) is QingTuiDocumentSink
 
 
 def test_projects_resolve_to_distinct_diagnostic_components():

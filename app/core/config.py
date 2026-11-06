@@ -53,6 +53,9 @@ def _config_path() -> Path:
 
 
 def load_settings() -> AppConfig:
+    if os.environ.get("AUTOANALYZER_DESKTOP") == "1":
+        from app.desktop.bootstrap import load_desktop_config
+        return AppConfig.model_validate(load_desktop_config())
     path = _config_path()
     if not path.exists():
         example = path.with_name("config.example.json")

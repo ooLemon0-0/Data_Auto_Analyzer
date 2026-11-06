@@ -16,10 +16,14 @@ from playwright.sync_api import sync_playwright
 from app.core.config import settings
 from app.core.models import SourceItem
 from app.sources.base import DataSource
+from app.core.http import http_get
+from app.core.cancellation import check_cancelled, cancel_pause
 
 
 class Binxin7384HistorySource(DataSource):
     """EasyConnect -> 镔鑫 history -> 当天记录元数据 -> 延迟缓存图片。"""
+
+    parallel_image_downloads = True
 
     def __init__(self, project_config: dict):
         super().__init__(project_config)
@@ -31,7 +35,7 @@ class Binxin7384HistorySource(DataSource):
     # ------------------------------------------------------------------
     def _probe(self, url: str) -> bool:
         try:
-            response = requests.get(url, timeout=3)
+            response = http_get(url, timeout=3)
             return response.status_code < 500
         except Exception:
             return False
@@ -57,6 +61,7 @@ class Binxin7384HistorySource(DataSource):
         return []
 
     def _ensure_easyconnect(self) -> None:
+        check_cancelled()
         ec = self.source.get("easyconnect", {})
         if not ec.get("enabled", True):
             return
@@ -65,6 +70,7 @@ class Binxin7384HistorySource(DataSource):
         if self._probe(url):
             return
 
+        check_cancelled()
         command = self._easyconnect_command()
         if command:
             subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -74,7 +80,7 @@ class Binxin7384HistorySource(DataSource):
         while time.time() < deadline:
             if self._probe(url):
                 return
-            time.sleep(2)
+            cancel_pause(2)
 
         command_hint = command[0] if command else "未找到 EasyConnect 可执行文件，请在 config 中填写 launch_command"
         raise RuntimeError(
@@ -425,30 +431,8 @@ class Binxin7384HistorySource(DataSource):
         return all_items
 
     def fetch_day(self, business_date: date) -> list[SourceItem]:
-        self._ensure_easyconnect()
-        with sync_playwright() as p:
-            context = self._launch_context(p)
-            try:
-                page = context.pages[0] if context.pages else context.new_page()
-                page.goto(self.source["history_url"], wait_until="domcontentloaded", timeout=60000)
-                self._ensure_site_login(page)
-                page.locator(".history").wait_for(state="visible", timeout=30000)
-
-                start_text, end_text = self._set_day_filter(page, business_date)
-                page.wait_for_timeout(int(self.source.get("export", {}).get("wait_after_filter_ms", 1500)))
-                archive = self._download_data_export(page, business_date)
-                items = self._scrape_all_pages(page)
-
-                for item in items:
-                    item.metadata["filter_start"] = start_text
-                    item.metadata["filter_end"] = end_text
-                    item.metadata["data_export_archive"] = str(archive) if archive else ""
-
-                if not items:
-                    raise RuntimeError(f"{business_date.isoformat()} 没有抓到可审核记录")
-                return items
-            finally:
-                context.close()
+        from app.sources.billet_http import fetch_day
+        return fetch_day(self, business_date)
 
     @staticmethod
     def _detect_image_type(data: bytes) -> str | None:
@@ -507,7 +491,9 @@ class Binxin7384HistorySource(DataSource):
                 f"head={head!r}"
             )
 
+        check_cancelled()
         tmp.write_bytes(data)
+        check_cancelled()
         tmp.replace(destination)
         return destination
 
@@ -515,134 +501,5 @@ class Binxin7384HistorySource(DataSource):
     # Lazy image cache: only sampled/reviewed images are downloaded.
     # ------------------------------------------------------------------
     def materialize_image(self, image_url: str, destination: Path) -> Path:
-        """
-        将远端图片缓存到本地。
-
-        下载优先级：
-        1. 普通 requests（镔鑫 19000 图片服务当前可直接访问）
-        2. 如果失败，再使用已登录的 Chrome persistent context 请求
-
-        注意：镔鑫图片服务把 JPEG 以 application/octet-stream 返回，
-        所以两条链路都通过 magic bytes 判断图片，而不再要求 image/* MIME。
-        """
-        destination = Path(destination)
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        tmp = destination.with_suffix(destination.suffix + ".part")
-
-        # 清理上次异常退出遗留的临时文件。
-        try:
-            if tmp.exists():
-                tmp.unlink()
-        except OSError:
-            pass
-
-        # data:image/...;base64,...
-        if image_url.startswith("data:"):
-            try:
-                header, encoded = image_url.split(",", 1)
-                if ";base64" in header:
-                    data = base64.b64decode(encoded)
-                else:
-                    data = unquote(encoded).encode("utf-8")
-
-                content_type = (
-                    header[5:].split(";", 1)[0].strip().lower()
-                    if header.startswith("data:")
-                    else ""
-                )
-                return self._save_image_bytes(
-                    data=data,
-                    content_type=content_type,
-                    destination=destination,
-                    tmp=tmp,
-                )
-            except Exception as exc:
-                raise RuntimeError(f"内嵌图片解析失败: {exc}") from exc
-
-        headers = {
-            "Referer": self.source["history_url"],
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            ),
-        }
-
-        request_error: Exception | None = None
-
-        # --------------------------------------------------------------
-        # 1. Direct requests
-        # --------------------------------------------------------------
-        try:
-            response = requests.get(
-                image_url,
-                headers=headers,
-                timeout=30,
-            )
-            response.raise_for_status()
-
-            content_type = (response.headers.get("content-type") or "").lower()
-            data = response.content
-
-            return self._save_image_bytes(
-                data=data,
-                content_type=content_type,
-                destination=destination,
-                tmp=tmp,
-            )
-        except Exception as exc:
-            request_error = exc
-            try:
-                if tmp.exists():
-                    tmp.unlink()
-            except OSError:
-                pass
-
-        # --------------------------------------------------------------
-        # 2. Browser fallback
-        # --------------------------------------------------------------
-        with sync_playwright() as p:
-            context = self._launch_context(p)
-            try:
-                page = context.pages[0] if context.pages else context.new_page()
-                page.goto(
-                    self.source["history_url"],
-                    wait_until="domcontentloaded",
-                    timeout=60000,
-                )
-                self._ensure_site_login(page)
-
-                response = context.request.get(
-                    image_url,
-                    headers=headers,
-                    timeout=30000,
-                )
-                if not response.ok:
-                    raise RuntimeError(
-                        f"HTTP {response.status}: {response.status_text}"
-                    )
-
-                content_type = (response.headers.get("content-type") or "").lower()
-                data = response.body()
-
-                return self._save_image_bytes(
-                    data=data,
-                    content_type=content_type,
-                    destination=destination,
-                    tmp=tmp,
-                )
-            except Exception as browser_error:
-                try:
-                    if tmp.exists():
-                        tmp.unlink()
-                except OSError:
-                    pass
-
-                raise RuntimeError(
-                    f"图片缓存失败: {image_url}; "
-                    f"requests={request_error}; "
-                    f"chrome={browser_error}"
-                ) from browser_error
-            finally:
-                context.close()
-
+        from app.sources.billet_http import materialize_image
+        return materialize_image(self, image_url, destination)

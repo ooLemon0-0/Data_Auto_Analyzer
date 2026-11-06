@@ -126,16 +126,16 @@ def test_ocr_empty_fallback_is_opt_in_and_requires_a_matched_event():
 
 def test_fallback_inherits_log_and_parser_but_overrides_source():
     primary = {
-        "source": {"host": "172.30.31.73"},
+        "source": {"host": "192.0.2.73"},
         "log": {"path": "/same.log", "before_seconds": 8},
         "parser": {"type": "binxin_ocr", "match": {"time_weight": 30}},
     }
     fallback = {
-        "source": {"host": "172.30.31.84"},
+        "source": {"host": "192.0.2.84"},
         "log": {"after_seconds": 20},
     }
     merged = LogDiagnosticService._fallback_configuration(primary, fallback)
-    assert merged["source"]["host"] == "172.30.31.84"
+    assert merged["source"]["host"] == "192.0.2.84"
     assert merged["log"] == {
         "path": "/same.log", "before_seconds": 8, "after_seconds": 20
     }

@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -26,9 +27,14 @@ def _socks_over_rdp():
     }
 
 
-def test_remote_connection_status_does_not_expose_credentials():
-    status = RemoteAccessService().status("atrust_remote_246")
-    assert status["rdp_target"] == "10.100.205.246:3389"
+def test_remote_connection_status_does_not_expose_credentials(monkeypatch):
+    config = {"rdp": {"host": "203.0.113.246", "username": "example-user", "password": "example-password"},
+              "socks_proxy": {"host": "127.0.0.1", "port": 1080}}
+    monkeypatch.setattr("app.remote_access.service.settings", SimpleNamespace(remote_connection=lambda _id: config))
+    service = RemoteAccessService()
+    monkeypatch.setattr(service, "_port_reachable", lambda *_a, **_kw: False)
+    status = service.status("example-remote")
+    assert status["rdp_target"] == "203.0.113.246:3389"
     assert status["proxy_target"] == "127.0.0.1:1080"
     assert "password" not in status
     assert "username" not in status
@@ -41,7 +47,7 @@ def test_remote_connection_refuses_launch_until_rdp_password_is_configured():
         "enabled": True,
         "vpn": _vpn(),
         "rdp": {
-            "host": "10.100.205.246",
+            "host": "203.0.113.246",
             "subnet_mask": "255.255.255.0",
             "username": "administrator",
             "password": "",
@@ -74,7 +80,7 @@ def test_remote_connection_waits_for_socks_proxy_after_launching_rdp(monkeypatch
     config = {
         "vpn": _vpn(),
         "rdp": {
-            "host": "10.100.205.246",
+            "host": "203.0.113.246",
             "port": 3389,
             "connect_timeout_seconds": 180,
         },
@@ -106,7 +112,7 @@ def test_remote_connection_waits_for_socks_proxy_after_launching_rdp(monkeypatch
 
     assert events == [
         "launch_atrust",
-        ("wait", "10.100.205.246", 3389, 180, "aTrust 连通"),
+        ("wait", "203.0.113.246", 3389, 180, "aTrust 连通"),
         ("launch_rdp", config["socks_over_rdp"]),
         ("wait", "127.0.0.1", 1080, 90, "SocksOverRDP 代理"),
     ]
@@ -119,7 +125,7 @@ def test_remote_connection_rejects_invalid_socks_proxy_port():
         "enabled": True,
         "vpn": _vpn(),
         "rdp": {
-            "host": "10.100.205.246",
+            "host": "203.0.113.246",
             "subnet_mask": "255.255.255.0",
             "username": "administrator",
             "password": "secret",
@@ -140,7 +146,7 @@ def test_remote_connection_accepts_desktop_client_session_config():
         "enabled": True,
         "vpn": _vpn(),
         "rdp": {
-            "host": "10.100.205.246",
+            "host": "203.0.113.246",
             "subnet_mask": "255.255.255.0",
             "username": "administrator",
             "password": "secret",
@@ -158,7 +164,7 @@ def test_remote_connection_requires_socks_deployment_config():
         "enabled": True,
         "vpn": _vpn(),
         "rdp": {
-            "host": "10.100.205.246",
+            "host": "203.0.113.246",
             "subnet_mask": "255.255.255.0",
             "username": "administrator",
             "password": "secret",
@@ -240,7 +246,7 @@ def test_atrust_plaintext_login_fields_are_rejected():
         "enabled": True,
         "vpn": _vpn(username="operator", password="secret"),
         "rdp": {
-            "host": "10.100.205.246",
+            "host": "203.0.113.246",
             "subnet_mask": "255.255.255.0",
             "username": "administrator",
             "password": "secret",
@@ -259,16 +265,16 @@ def test_generated_rdp_file_forces_required_client_drive_redirection(
 
     rdp_path = service._write_rdp_file(
         {
-            "host": "10.100.205.246",
+            "host": "203.0.113.246",
             "port": 3389,
-            "username": r"DESKTOP-G8OVQHR\Administrator",
+            "username": r"EXAMPLE-DESKTOP\Administrator",
         },
         _socks_over_rdp(),
     )
 
     content = rdp_path.read_text(encoding="utf-16")
-    assert "full address:s:10.100.205.246:3389" in content
-    assert r"username:s:DESKTOP-G8OVQHR\Administrator" in content
+    assert "full address:s:203.0.113.246:3389" in content
+    assert r"username:s:EXAMPLE-DESKTOP\Administrator" in content
     assert r"drivestoredirect:s:C:\;" in content
     assert "prompt for credentials:i:0" in content
     assert "authentication level:i:2" in content
@@ -281,7 +287,7 @@ def test_remote_bootstrap_hint_contains_copyable_config_derived_command(
     config = {
         "id": "test",
         "name": "瑞丰远程连接",
-        "rdp": {"host": "10.100.205.246", "port": 3389},
+        "rdp": {"host": "203.0.113.246", "port": 3389},
         "socks_proxy": {"host": "127.0.0.1", "port": 1080},
         "socks_over_rdp": _socks_over_rdp(),
     }
@@ -345,7 +351,7 @@ def test_ready_target_port_is_reused_without_relaunching_remote_chain(monkeypatc
         "enabled": True,
         "vpn": _vpn(),
         "rdp": {
-            "host": "10.100.205.246",
+            "host": "203.0.113.246",
             "subnet_mask": "255.255.255.0",
             "username": "administrator",
             "password": "secret",

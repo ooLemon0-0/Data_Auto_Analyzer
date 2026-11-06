@@ -5,6 +5,7 @@ import logging
 import posixpath
 import re
 import shlex
+import socket
 from threading import RLock
 import time
 
@@ -335,18 +336,42 @@ class SSHFileLogSource(LogSource):
             chunks: list[bytes] = []
             total_bytes = 0
             for selected_path in selected_paths:
-                command = "awk -v start={0} -v finish={1} {2} {3}".format(
+                remaining = max_bytes - total_bytes
+                read_limit = remaining + 1
+                awk_command = "LC_ALL=C awk -v start={0} -v finish={1} {2} {3}".format(
                     shlex.quote(fetch_start.strftime("%Y-%m-%d %H:%M:%S")),
                     shlex.quote(fetch_end.strftime("%Y-%m-%d %H:%M:%S")),
                     shlex.quote(awk),
                     shlex.quote(selected_path),
                 )
-                _, stdout, stderr = client.exec_command(
-                    command, timeout=float(self.config.get("command_timeout_seconds", 20))
-                )
-                raw_part = stdout.read(max_bytes - total_bytes + 1)
-                error = stderr.read(4096).decode("utf-8", errors="replace").strip()
-                status = stdout.channel.recv_exit_status()
+                # Bound output on the remote side as well.  Previously read(limit)
+                # stopped draining stdout at the byte limit and stderr.read() then
+                # waited forever for a command blocked on its full stdout channel.
+                pipeline = f"{awk_command} | head -c {read_limit}"
+                command = f"bash -o pipefail -c {shlex.quote(pipeline)}"
+                timeout = float(self.config.get("command_timeout_seconds", 20))
+                stdout = None
+                try:
+                    _, stdout, stderr = client.exec_command(command, timeout=timeout)
+                    raw_part = stdout.read(read_limit)
+                    if len(raw_part) > remaining:
+                        stdout.channel.close()
+                        raise LogSourceError(
+                            f"时间窗口日志超过安全上限 {max_bytes} bytes，请缩小窗口"
+                        )
+                    error = stderr.read(4096).decode(
+                        "utf-8", errors="replace"
+                    ).strip()
+                    status = stdout.channel.recv_exit_status()
+                except (socket.timeout, TimeoutError) as exc:
+                    try:
+                        if stdout is not None:
+                            stdout.channel.close()
+                    except Exception:
+                        pass
+                    raise LogSourceError(
+                        f"远程日志读取超时 ({selected_path}, {timeout:g}s)"
+                    ) from exc
                 if status != 0:
                     if "No such file" in error:
                         raise LogSourceError(f"日志文件不存在: {selected_path}")
@@ -354,10 +379,6 @@ class SSHFileLogSource(LogSource):
                         f"远程日志读取失败 ({selected_path}): {error or 'unknown error'}"
                     )
                 total_bytes += len(raw_part)
-                if total_bytes > max_bytes:
-                    raise LogSourceError(
-                        f"时间窗口日志超过安全上限 {max_bytes} bytes，请缩小窗口"
-                    )
                 chunks.append(raw_part)
 
             raw = b"\n".join(chunks)

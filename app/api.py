@@ -4,7 +4,6 @@ from datetime import date, datetime
 import json
 import logging
 from pathlib import Path
-from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
@@ -13,7 +12,6 @@ from pydantic import BaseModel, Field
 
 from app import db
 from app.core.config import settings
-from app.core.registry import build_source
 from app.services.review_service import review_service
 from app.diagnostics.models import DiagnosticQuery, DiagnosticSearchQuery
 from app.diagnostics.service import diagnostic_service
@@ -242,41 +240,9 @@ def diagnose_item(item_id: int, req: DiagnosticItemRequest):
 
 @app.get("/api/items/{item_id}/image")
 def item_image(item_id: int):
-    with db.connect() as conn:
-        row = conn.execute(
-            "SELECT project_id, business_date, source_key, image_path, image_url FROM items WHERE id=?",
-            (item_id,),
-        ).fetchone()
-    if not row:
-        raise HTTPException(status_code=404, detail="Item not found")
-
-    image_path = (row["image_path"] or "").strip()
-    if image_path:
-        path = Path(image_path).resolve()
-        if path.exists():
-            return FileResponse(path)
-
-    image_url = (row["image_url"] or "").strip()
-    if not image_url:
-        raise HTTPException(status_code=404, detail="Image has neither local path nor source URL")
-
-    suffix = Path(urlparse(image_url).path).suffix.lower()
-    if suffix not in {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}:
-        suffix = ".jpg"
-    destination = (
-        Path(settings.storage.data_root).resolve()
-        / row["project_id"]
-        / row["business_date"]
-        / "images"
-        / f"{item_id}{suffix}"
-    )
-
     try:
-        project = settings.project(row["project_id"]).model_dump()
-        source = build_source(project)
-        path = source.materialize_image(image_url, destination)
-        with db.connect() as conn:
-            conn.execute("UPDATE items SET image_path=? WHERE id=?", (str(path.resolve()), item_id))
-        return FileResponse(path)
+        return FileResponse(review_service.materialize_item_image(item_id))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Image cache failed: {exc}") from exc

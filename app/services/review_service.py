@@ -2,12 +2,26 @@ from __future__ import annotations
 
 import json
 import random
+from concurrent.futures import as_completed
+from contextvars import copy_context
 from datetime import date, datetime
+from pathlib import Path
 from typing import Any
+from threading import BoundedSemaphore, RLock
+from urllib.parse import urlparse
 
 from app import db
 from app.core.config import settings
-from app.core.registry import build_sink, build_source
+from app.core.registry import SOURCE_FACTORIES, build_sink, build_source
+from app.core.progress import report_progress
+from app.core.cancellation import check_cancelled, cancellable_lock, WorkCancelled
+from app.core.executor import DaemonExecutor
+
+
+# A batch may have several project pools. Bound aggregate requests as well.
+_IMAGE_SLOTS = BoundedSemaphore(8)
+_INDEX_LOCK = RLock()
+_INDEX_LOCKS = {}
 
 
 class ReviewService:
@@ -15,12 +29,35 @@ class ReviewService:
         return settings.project(project_id).model_dump()
 
     @staticmethod
+    def image_cache_revision(project):
+        return getattr(SOURCE_FACTORIES.get(project.get("source", {}).get("type")), "image_cache_revision", "")
+
+    @staticmethod
     def _stable_order(ids: list[int], project_id: str, business_date: str) -> list[int]:
         ordered = list(ids)
         random.Random(f"{project_id}:{business_date}").shuffle(ordered)
         return ordered
 
+    def _ensure_index(self, project, business_date, target=0):
+        revision = self.image_cache_revision(project)
+        key = (project["id"], business_date.isoformat())
+        with _INDEX_LOCK:
+            lock = _INDEX_LOCKS.setdefault(key, RLock())
+        with cancellable_lock(lock):
+            with db.connect() as conn:
+                rows = conn.execute("SELECT metadata_json FROM items WHERE project_id=? AND business_date=?", key).fetchall()
+            outdated = bool(revision) and any(json.loads(r["metadata_json"] or "{}").get("review_image_revision") != revision for r in rows)
+            refresh = bool(project.get("source", {}).get("refresh_on_prepare", False))
+            if not rows or len(rows) < target or refresh or outdated:
+                if outdated:
+                    report_progress("records", "正在补齐端面框坐标，已有原图和审核结果会保留")
+                items = build_source(project).fetch_day(business_date)
+                db.upsert_items(project["id"], business_date.isoformat(), items)
+            else:
+                report_progress("records", f"本地已有 {len(rows):,} 条记录，无需重新查询", len(rows), len(rows))
+
     def prepare(self, project_id: str, business_date: date, target_size: int | None = None) -> dict[str, Any]:
+        report_progress("records", "正在检查该日期的本地数据")
         project = self.project_dict(project_id)
         target = int(target_size or project["daily_target"])
         if target < 1:
@@ -28,16 +65,9 @@ class ReviewService:
 
         # Re-opening an existing day should be instant. Fetch from the intranet only if the day
         # has not been indexed yet, or config explicitly requests refresh.
-        with db.connect() as conn:
-            existing_items = conn.execute(
-                "SELECT COUNT(*) FROM items WHERE project_id=? AND business_date=?",
-                (project_id, business_date.isoformat()),
-            ).fetchone()[0]
-        refresh = bool(project.get("source", {}).get("refresh_on_prepare", False))
-        if existing_items == 0 or existing_items < target or refresh:
-            source = build_source(project)
-            items = source.fetch_day(business_date)
-            db.upsert_items(project_id, business_date.isoformat(), items)
+        self._ensure_index(project, business_date, target)
+
+        report_progress("sampling", "正在恢复审核进度并生成抽样队列")
 
         with db.connect() as conn:
             now = datetime.now().isoformat(timespec="seconds")
@@ -80,7 +110,148 @@ class ReviewService:
             else:
                 self._rebalance_queue(conn, session)
 
-        return self.state(project_id, business_date)
+        prefetch = None
+        if project.get("source", {}).get("prefetch_sample_images", False):
+            prefetch = self._prefetch_queue_images(project, business_date)
+
+        state = self.state(project_id, business_date)
+        if prefetch is not None:
+            state["local_images_ready"] = prefetch["ready"]
+            state["local_images_downloaded"] = prefetch["downloaded"]
+        report_progress("ready", "样本图片已保存到本机，可以开始审核", 1, 1)
+        return state
+
+    @staticmethod
+    def _image_destination(row, revision="") -> Path:
+        image_url = (row["image_url"] or "").strip()
+        suffix = Path(urlparse(image_url).path).suffix.lower()
+        if suffix not in {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}:
+            suffix = ".jpg"
+        return (
+            Path(settings.storage.data_root).resolve()
+            / row["project_id"]
+            / row["business_date"]
+            / "images"
+            / (f"{row['id']}.{revision}.png" if revision else f"{row['id']}{suffix}")
+        )
+
+    @staticmethod
+    def _existing_image(row, revision="") -> Path | None:
+        image_path = (row["image_path"] or "").strip()
+        if image_path:
+            path = Path(image_path).resolve()
+            if path.exists() and (not revision or path.name.endswith(f".{revision}.png")):
+                return path
+        destination = ReviewService._image_destination(row, revision)
+        return destination if destination.exists() else None
+
+    def _cache_image_row(self, row, source) -> tuple[Path, bool]:
+        check_cancelled()
+        revision = getattr(source, "image_cache_revision", "")
+        existing = self._existing_image(row, revision)
+        metadata = json.loads(row["metadata_json"] or "{}") if "metadata_json" in row.keys() else {}
+        if existing is not None:
+            path = existing
+            downloaded = False
+        else:
+            image_url = (row["image_url"] or "").strip()
+            if not image_url:
+                raise RuntimeError(f"样本 {row['id']} 没有现场图片地址")
+            with cancellable_lock(_IMAGE_SLOTS):
+                destination = self._image_destination(row, revision)
+                if revision:
+                    path, patch = source.materialize_review_image(image_url, destination, metadata,
+                        original=metadata.get("original_cache_path") or row["image_path"], label=row["recognition_text"])
+                    metadata.update(patch)
+                else:
+                    path = source.materialize_image(image_url, destination)
+            downloaded = True
+
+        with db.connect() as conn:
+            conn.execute(
+                "UPDATE items SET image_path=? WHERE id=?",
+                (str(path.resolve()), row["id"]),
+            )
+            if revision:
+                conn.execute("UPDATE items SET metadata_json=? WHERE id=?", (json.dumps(metadata, ensure_ascii=False), row["id"]))
+        return path, downloaded
+
+    def _prefetch_queue_images(
+        self, project: dict[str, Any], business_date: date
+    ) -> dict[str, int]:
+        """Materialize the current review sample before returning it to the UI."""
+        with db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT i.id, i.project_id, i.business_date, i.image_path, i.image_url, i.metadata_json, i.recognition_text
+                FROM review_queue q
+                JOIN review_sessions s ON s.id=q.session_id
+                JOIN items i ON i.id=q.item_id
+                WHERE s.project_id=? AND s.business_date=?
+                ORDER BY q.seq
+                """,
+                (project["id"], business_date.isoformat()),
+            ).fetchall()
+
+        source = build_source(project)
+        revision = getattr(source, "image_cache_revision", "")
+        pending = [row for row in rows if self._existing_image(row, revision) is None]
+        report_progress("images", f"本地图片 {len(rows) - len(pending)} / {len(rows)} 张", len(rows) - len(pending), len(rows))
+        if not pending:
+            return {"ready": len(rows), "downloaded": 0}
+
+        downloaded = 0
+        failures: list[str] = []
+        workers = min(4, max(1, int(project.get("source", {}).get("image_download_workers", 4)))) if getattr(source, "parallel_image_downloads", False) else 1
+        # Browser-backed legacy sources retain a single worker/profile. HTTP
+        # sources are stateless and can materialize independent files in parallel.
+        with DaemonExecutor(max_workers=workers, thread_name_prefix="sample-image") as pool:
+            futures = {pool.submit(copy_context().run, self._cache_image_row, row, source): row["id"] for row in pending}
+            for index, future in enumerate(as_completed(futures), 1):
+                check_cancelled()
+                try:
+                    _, was_downloaded = future.result()
+                    downloaded += int(was_downloaded)
+                except WorkCancelled:
+                    raise
+                except Exception as exc:
+                    check_cancelled()
+                    failures.append(f"{futures[future]}: {exc}")
+                ready = len(rows) - len(pending) + index - len(failures)
+                report_progress("images", f"已缓存 {ready} / {len(rows)} 张图片", ready, len(rows))
+
+        if failures:
+            preview = "；".join(failures[:3])
+            extra = f"；另有 {len(failures) - 3} 条" if len(failures) > 3 else ""
+            raise RuntimeError(
+                f"抽样图片预缓存失败 {len(failures)} 条（{preview}{extra}），请重试拉取"
+            )
+        return {"ready": len(rows), "downloaded": downloaded}
+
+    def materialize_item_image(self, item_id: int) -> Path:
+        """Return a cached image, fetching it only when an uncached item is opened."""
+        with db.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, project_id, business_date, image_path, image_url, metadata_json, recognition_text
+                FROM items WHERE id=?
+                """,
+                (item_id,),
+            ).fetchone()
+        if not row:
+            raise KeyError("Item not found")
+
+        project = self.project_dict(row["project_id"])
+        revision = self.image_cache_revision(project)
+        if revision and json.loads(row["metadata_json"] or "{}").get("review_image_revision") != revision:
+            self._ensure_index(project, date.fromisoformat(row["business_date"]))
+            with db.connect() as conn:
+                row = conn.execute("SELECT * FROM items WHERE id=?", (item_id,)).fetchone()
+        existing = self._existing_image(row, revision)
+        if existing is not None:
+            return existing
+        path, _ = self._cache_image_row(row, build_source(project))
+        return path
 
     def _session(self, conn, project_id: str, business_date: date):
         session = conn.execute(

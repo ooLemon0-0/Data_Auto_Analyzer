@@ -1,3 +1,7 @@
+import json
+from pathlib import Path
+from types import SimpleNamespace
+
 from app.sinks.qingtui_document import QingTuiDocumentSink
 
 
@@ -39,6 +43,57 @@ class _Frame:
 class _Page:
     def wait_for_timeout(self, _milliseconds: int):
         pass
+
+
+def test_create_sheet_renames_the_new_tab_even_when_inserted_between_existing_tabs():
+    class Sheet(_Sheet):
+        def dblclick(self):
+            frame.editing = self
+
+    class AddButton:
+        def count(self):
+            return 1
+
+        def is_visible(self):
+            return True
+
+        def click(self):
+            frame.sheets.insert(1, Sheet("Sheet3"))
+
+    class RenameInput:
+        def count(self):
+            return 1
+
+        def is_visible(self):
+            return frame.editing is not None
+
+        def fill(self, name):
+            frame.editing.name = name
+
+        def press(self, key):
+            assert key == "Enter"
+
+    class Frame:
+        def __init__(self):
+            self.sheets = [Sheet("existing-left"), Sheet("existing-right")]
+            self.editing = None
+
+        def locator(self, selector):
+            if selector == ".sheet-name":
+                return _Sheets(self.sheets)
+            if selector == ".sheet-add":
+                return SimpleNamespace(first=AddButton())
+            if selector == "input.sheet-name-input":
+                return SimpleNamespace(last=RenameInput())
+            raise AssertionError(selector)
+
+    frame = Frame()
+    sink = QingTuiDocumentSink({})
+    result = sink._create_sheet(_Page(), frame, "new-point", {
+        "sheet_add_button": ".sheet-add", "sheet_rename_input": "input.sheet-name-input"
+    })
+    assert result.name == "new-point"
+    assert [sheet.name for sheet in frame.sheets] == ["existing-left", "new-point", "existing-right"]
 
 
 class _TestSink(QingTuiDocumentSink):
@@ -85,6 +140,33 @@ def test_sheet_name_validation_rejects_wps_invalid_characters():
         assert "非法字符" in str(exc)
     else:
         raise AssertionError("invalid WPS sheet name should be rejected")
+
+
+def test_binxin_projects_share_document_but_keep_distinct_sheets():
+    root = Path(__file__).resolve().parents[1]
+    config = json.loads(
+        (root / "config" / "config.example.json").read_text(encoding="utf-8")
+    )
+    projects = {project["id"]: project for project in config["projects"]}
+    expected = {
+        "binxin_billet": "73-84",
+        "binxin_billet_72": "1期-72",
+        "binxin_billet_74": "1期-74",
+        "binxin_76": "76",
+        "binxin_77": "77",
+    }
+    document_url = "https://web.qingtui.com/drive/preview/EXAMPLE_DOCUMENT_ID"
+
+    actual = {
+        project_id: projects[project_id]["sink"]["selectors"]["sheet_name"]
+        for project_id in expected
+    }
+    assert actual == expected
+    assert len(set(actual.values())) == len(actual)
+    assert all(
+        projects[project_id]["sink"]["document_url"] == document_url
+        for project_id in expected
+    )
 
 
 def test_written_table_comparison_accepts_wps_display_formatting():

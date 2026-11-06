@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 
 import pyperclip
 import requests
+from app.core.progress import report_progress
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
@@ -743,6 +744,8 @@ class QingTuiDocumentSink(DataSink):
             +
             timeout_s
         )
+
+        report_progress("auth", "等待轻推 / WPS 验证，请切换到验证窗口扫码或手机确认")
 
         while time.time() < deadline:
 
@@ -1928,6 +1931,10 @@ class QingTuiDocumentSink(DataSink):
         self._validate_sheet_name(sheet_name)
         names = frame.locator(".sheet-name")
         before_count = names.count()
+        before_names = {
+            names.nth(index).get_attribute("data-name") or names.nth(index).inner_text().strip()
+            for index in range(before_count)
+        }
         configured_add = str(selectors.get("sheet_add_button", "")).strip()
         add_selectors = [configured_add] if configured_add else [
             ".sheets-add-btn-wrapper button",
@@ -1964,7 +1971,14 @@ class QingTuiDocumentSink(DataSink):
         if names.count() <= before_count:
             raise RuntimeError(f"创建工作表 {sheet_name!r} 后未检测到新标签")
 
-        new_sheet = names.nth(names.count() - 1)
+        new_sheet = next(
+            (names.nth(index) for index in range(names.count())
+             if (names.nth(index).get_attribute("data-name")
+                 or names.nth(index).inner_text().strip()) not in before_names),
+            None,
+        )
+        if new_sheet is None:
+            raise RuntimeError("新增工作表后无法唯一定位新标签")
         existing_name = (
             new_sheet.get_attribute("data-name")
             or new_sheet.inner_text().strip()
@@ -2616,6 +2630,8 @@ class QingTuiDocumentSink(DataSink):
         summary: dict[str, Any],
     ) -> dict[str, Any]:
 
+        report_progress("sync", "正在准备本地统计结果并连接轻推文档")
+
         sink_cfg = self.config.get(
             "sink",
             {},
@@ -2727,6 +2743,7 @@ class QingTuiDocumentSink(DataSink):
                 # 2. 选择目标 Sheet
                 # ================================================
 
+                report_progress("sync", "正在定位目标工作表")
                 self._select_sheet_if_configured(
                     page,
                     selectors,
@@ -2745,6 +2762,7 @@ class QingTuiDocumentSink(DataSink):
                 # 4. 上传前先读取整个已有表格
                 # ================================================
 
+                report_progress("sync", "正在读取已有统计，核对该日期的记录")
                 old_text = (
                     self._copy_used_range(
                         page,
@@ -2783,6 +2801,7 @@ class QingTuiDocumentSink(DataSink):
                 # 6. 整块覆盖写回 WPS
                 # ================================================
 
+                report_progress("sync", "正在写入统计结果并等待文档保存")
                 pasted_tsv = (
                     self._rewrite_table(
                         page,
@@ -2809,6 +2828,7 @@ class QingTuiDocumentSink(DataSink):
                 # 强制校验 date sort
                 # ================================================
 
+                report_progress("sync", "正在回读文档，校验写入结果")
                 verified_table = (
                     self._verify_written_table(
                         page,

@@ -23,11 +23,17 @@ class Binxin76LogParser(LogParser):
     parser_type = "binxin_76_ocr"
     START = "取到图片开始一次推理"
     END = "本次取图推理结束"
+    UPLOAD_RESULT = "ocr upload result:"
     TS = re.compile(r"(?P<ts>\d{4}[-/]\d{2}[-/]\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d{1,6})?)")
     NUMBER = r"[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?"
 
     def parse_events(self, raw_text: str) -> list[DiagnosticEvent]:
-        blocks = self._split_events(raw_text)
+        # The 76/77 edge build writes one complete OCR event per upload-result
+        # line.  Keep the older start/end protocol as a compatibility fallback.
+        upload_blocks = [
+            line for line in raw_text.splitlines() if self.UPLOAD_RESULT in line
+        ]
+        blocks = upload_blocks or self._split_events(raw_text)
         events: list[DiagnosticEvent] = []
         for index, block in enumerate(blocks):
             try:
@@ -36,7 +42,11 @@ class Binxin76LogParser(LogParser):
                 # A malformed event must not hide valid neighbours.
                 events.append(DiagnosticEvent(event_id=f"binxin-{index}", raw_log=block,
                                               warnings=[f"事件部分解析失败: {exc}"]))
-        return [event for event in events if self.START in event.raw_log]
+        return [
+            event
+            for event in events
+            if self.START in event.raw_log or self.UPLOAD_RESULT in event.raw_log
+        ]
 
     def score_event(self, event: DiagnosticEvent, query: DiagnosticQuery) -> float:
         match = self.config.get("match", {})
@@ -52,11 +62,26 @@ class Binxin76LogParser(LogParser):
                 score += time_weight * (1 - delta / max(max_delta, 0.001))
         expected = self._normalise(query.expected_result)
         details = event.details if isinstance(event.details, BinxinDiagnosticData) else None
-        actual = self._normalise(details.ocr.joined_text if details and details.ocr else None)
-        if expected and actual and expected == actual:
+        strings = details.ocr.strings if details and details.ocr else []
+        candidates = {
+            self._normalise(details.ocr.joined_text if details and details.ocr else None),
+            *(self._normalise(item.text) for item in strings),
+            *(
+                self._normalise(left.text + right.text)
+                for left_index, left in enumerate(strings)
+                for right in strings[left_index + 1:]
+            ),
+        }
+        candidates.discard("")
+        if expected and expected in candidates:
             score += result_weight
-        if query.image_name and event.image_name and Path(query.image_name).name == Path(event.image_name).name:
-            score += image_weight
+        if query.image_name and event.image_name:
+            query_name = Path(query.image_name).name
+            event_name = Path(event.image_name).name
+            # The edge log prefixes the original history filename with two
+            # storage hashes, while the history API returns only origin_*.jpg.
+            if query_name == event_name or event_name.endswith(query_name) or query_name.endswith(event_name):
+                score += image_weight
         return score
 
     @staticmethod
@@ -86,9 +111,11 @@ class Binxin76LogParser(LogParser):
 
     def _parse_event(self, block: str, index: int) -> DiagnosticEvent:
         timestamps = [self._datetime(m.group("ts")) for m in self.TS.finditer(block)]
+        upload_payloads = self._json_objects_after(block, self.UPLOAD_RESULT)
+        upload_time = self._payload_time(upload_payloads[-1]) if upload_payloads else None
         event = DiagnosticEvent(
-            event_id=f"binxin-{index}", start_time=timestamps[0] if timestamps else None,
-            trigger_time=self._marker_time(block, self.START),
+            event_id=f"binxin-{index}", start_time=timestamps[0] if timestamps else upload_time,
+            trigger_time=upload_time or self._marker_time(block, self.START),
             finish_time=self._marker_time(block, self.END) or (timestamps[-1] if timestamps else None),
             raw_log=block, details=BinxinDiagnosticData(),
         )
@@ -103,6 +130,16 @@ class Binxin76LogParser(LogParser):
             if event.image_url:
                 event.image_name = Path(event.image_url.split("?", 1)[0]).name
         return event
+
+    @staticmethod
+    def _payload_time(payload: dict) -> datetime | None:
+        try:
+            value = float(payload.get("accTime"))
+            if value > 10_000_000_000:
+                value /= 1000
+            return datetime.fromtimestamp(value)
+        except (AttributeError, OSError, OverflowError, TypeError, ValueError):
+            return None
 
     def _datetime(self, value: str) -> datetime:
         cleaned = value.replace("/", "-").replace(",", ".")
@@ -264,13 +301,18 @@ class Binxin76LogParser(LogParser):
         return boxes, global_result
 
     def _parse_ocr(self, block: str, warnings: list[str]) -> OCRDiagnostic | None:
-        payloads = self._json_objects_after(block, "推理结果:") or self._json_objects_after(block, "推理结果：")
+        payloads = self._json_objects_after(block, self.UPLOAD_RESULT)
+        if payloads:
+            payload = payloads[-1]
+            ocr = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+        else:
+            payloads = self._json_objects_after(block, "推理结果:") or self._json_objects_after(block, "推理结果：")
+            payload = payloads[-1] if payloads else None
+            ocr = payload.get("ocrData") if payload and isinstance(payload.get("ocrData"), dict) else payload
         if not payloads:
-            if "推理结果" in block:
+            if "推理结果" in block or self.UPLOAD_RESULT in block:
                 warnings.append("OCR 结果 JSON 不完整或无法解析")
             return None
-        payload = payloads[-1]
-        ocr = payload.get("ocrData") if isinstance(payload.get("ocrData"), dict) else payload
         raw_strings = ocr.get("stringList") or []
         strings = []
         for index, item in enumerate(raw_strings):
@@ -282,8 +324,17 @@ class Binxin76LogParser(LogParser):
                 if coords and isinstance(coords[0], (int, float)):
                     coords = list(zip(coords[::2], coords[1::2]))
                 try:
-                    polygon = Polygon(points=[Point(x=float(p[0]), y=float(p[1])) for p in coords], coordinate_space=CoordinateSpace.ORIGINAL_IMAGE)
-                except (TypeError, ValueError, IndexError):
+                    polygon = Polygon(
+                        points=[
+                            Point(
+                                x=float(p.get("x") if isinstance(p, dict) else p[0]),
+                                y=float(p.get("y") if isinstance(p, dict) else p[1]),
+                            )
+                            for p in coords
+                        ],
+                        coordinate_space=CoordinateSpace.ORIGINAL_IMAGE,
+                    )
+                except (AttributeError, TypeError, ValueError, IndexError):
                     polygon = None
             text = str(item.get("stringName", ""))
             rec_method = item.get("recMethod")
