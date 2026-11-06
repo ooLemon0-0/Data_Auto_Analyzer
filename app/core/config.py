@@ -21,6 +21,7 @@ class StorageConfig(BaseModel):
 class ProjectConfig(BaseModel):
     id: str
     name: str
+    category: str = ""
     enabled: bool = True
     daily_target: int = Field(default=50, ge=1)
     source: dict[str, Any]

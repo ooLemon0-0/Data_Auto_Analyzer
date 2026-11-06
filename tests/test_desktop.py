@@ -147,7 +147,8 @@ def test_upload_rechecks_current_statistics_before_sending(sync):
 
 def test_manual_upload_still_runs_when_auto_upload_is_unchecked():
     from app.desktop.window import ReviewWindow
-    window = ReviewWindow.__new__(ReviewWindow)
+    # This tests scheduler decisions, so avoid an uninitialized Qt object.
+    window = SimpleNamespace()
     window.closed, window.busy = False, False
     window.notice = None
     window.selection_dialog = None
@@ -155,9 +156,9 @@ def test_manual_upload_still_runs_when_auto_upload_is_unchecked():
     window.sync = SimpleNamespace(due=lambda: {"project_id": "point"})
     runs = []
     window._run = lambda *_args, **_kwargs: runs.append(True)
-    window._try_sync()
+    ReviewWindow._try_sync(window)
     assert not runs
-    window._try_sync(force=True)
+    ReviewWindow._try_sync(window, force=True)
     assert runs == [True]
 
 

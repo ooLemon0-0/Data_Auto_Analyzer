@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import date
+from dataclasses import replace
+import json
 import logging
 from pathlib import Path
 from threading import Thread
@@ -9,7 +11,7 @@ import time
 from PySide6.QtCore import QDate, QObject, QSettings, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QImageReader, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDateEdit, QFrame,
-    QHBoxLayout, QLabel, QMainWindow, QProgressBar, QScrollArea, QSizePolicy,
+    QHBoxLayout, QLabel, QLineEdit, QMainWindow, QProgressBar, QScrollArea, QSizePolicy,
     QListWidget, QListWidgetItem, QSpinBox, QStackedWidget, QVBoxLayout, QWidget)
 
 from app import db
@@ -19,6 +21,10 @@ from app.core.cancellation import CancellationToken, WorkCancelled, cancellation
 from app.desktop.bootstrap import VERSION, data_directory
 from app.desktop.batch_dialogs import DownloadProgressDialog, ProjectSelectionDialog
 from app.desktop.downloads import DownloadManager, task_key
+from app.desktop.cache_store import CacheStore, format_bytes
+from app.desktop.cache_dialog import CacheDialog
+from app.desktop.task_dialog import TaskBrowserDialog
+from app.desktop.tasks import CATEGORIES, TaskQuery, filter_tasks, project_category, review_summaries, task_rows
 from app.desktop.network import EasyConnectManager
 from app.desktop.sync import DesktopSync
 from app.desktop.theme import app_icon, icon
@@ -43,11 +49,13 @@ class ReviewWindow(QMainWindow):
         db.init_db()
         self.sync = DesktopSync(self.service)
         self.projects = [p for p in settings.projects if p.enabled]
-        self.project_by_id = {p.id: p for p in self.projects}
+        self.project_by_id = {p.id: p for p in settings.projects}
         self.state = None
         self.active_key, self.pending_open_key = None, None
         self.ready_priority = None
         self.job_items, self.review_marks = {}, {}
+        self.task_jobs, self.task_reviews = {}, review_summaries()
+        self.cache_dialog, self.task_browser = None, None
         self.selection_dialog = None
         self.restoring = True
         self.network_checking = False
@@ -58,6 +66,14 @@ class ReviewWindow(QMainWindow):
         self.notice = None
         self.controls, self.decision_buttons, self.shortcuts = [], [], []
         self.preferences = QSettings(str(Path(db.DB_PATH).resolve().parent / "desktop-preferences.ini"), QSettings.Format.IniFormat)
+        try:
+            self.task_query = TaskQuery(**json.loads(self.preferences.value("task_query", "{}")))
+        except (ValueError, TypeError):
+            self.task_query = TaskQuery()
+        self.task_refresh_timer = QTimer(self)
+        self.task_refresh_timer.setSingleShot(True)
+        self.task_refresh_timer.setInterval(100)
+        self.task_refresh_timer.timeout.connect(self._refresh_task_list)
         self.signals = JobSignals(self)
         self.signals.finished.connect(self._finished)
         self.signals.progress.connect(self._progress)
@@ -69,7 +85,7 @@ class ReviewWindow(QMainWindow):
         self.download_dialog.retry.connect(self._retry_task)
         self.download_dialog.stop.connect(self._stop_task)
         self.download_dialog.stop_all.connect(self._stop_all_tasks)
-        self.downloads = DownloadManager(self.projects,
+        self.downloads = DownloadManager(settings.projects,
             lambda job: self.signals.download_changed.emit(job) if not self.closed else None, service=self.service,
             state_path=Path(db.DB_PATH).parent / "download_tasks.json")
         self.downloads.restore_sessions()
@@ -108,6 +124,9 @@ class ReviewWindow(QMainWindow):
         self.subtitle.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         titles.addWidget(self.subtitle)
         header.addLayout(titles, 1)
+        self.cache_button = button("缓存空间", self.show_cache_manager, glyph="folder")
+        self.controls.append(self.cache_button)
+        header.addWidget(self.cache_button)
         self.download_status_button = button("下载进度", self.show_download_progress, glyph="download", color="#6658E8")
         self.download_status_button.setEnabled(False)
         header.addWidget(self.download_status_button)
@@ -190,13 +209,30 @@ class ReviewWindow(QMainWindow):
         hint = label("多点位并发下载，先就绪、先审核。", muted=True)
         hint.setWordWrap(True)
         box.addWidget(hint)
-        box.addWidget(label("本地审核任务", section=True))
+        task_heading = QHBoxLayout()
+        task_heading.addWidget(label("本地审核任务", section=True), 1)
+        task_heading.addWidget(button("筛选 / 排序", self.show_task_browser, variant="ghost"))
+        box.addLayout(task_heading)
+        self.task_search = QLineEdit(self.task_query.search)
+        self.task_search.setPlaceholderText("搜索点位或日期")
+        self.task_search.setClearButtonEnabled(True)
+        self.task_search.textChanged.connect(self._task_filters_changed)
+        box.addWidget(self.task_search)
+        self.task_category = QComboBox()
+        self.task_category.addItem("全部项目分类", "")
+        for category in dict.fromkeys((*CATEGORIES, *(project_category(p) for p in settings.projects))):
+            self.task_category.addItem(category, category)
+        self.task_category.setCurrentIndex(max(0, self.task_category.findData(self.task_query.category)))
+        self.task_category.currentIndexChanged.connect(self._task_filters_changed)
+        box.addWidget(self.task_category)
+        self.task_count = label("尚无任务", muted=True)
+        box.addWidget(self.task_count)
         self.task_list = QListWidget()
         self.task_list.setMinimumHeight(200)
         self.task_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.task_list.setSpacing(5)
-        self.task_list.setStyleSheet("QListWidget { background: transparent; border: none; outline: 0; } QListWidget::item { border: 1px solid #ECEEF5; border-radius: 9px; padding: 3px; } QListWidget::item:selected { background: #F0EDFE; border-color: #CBC4F7; }")
-        self.task_list.itemClicked.connect(lambda item: self._open_task(item.data(Qt.ItemDataRole.UserRole)))
+        self.task_list.setStyleSheet("QListWidget { background: transparent; border: none; outline: 0; } QListWidget::item { border: 1px solid #ECEEF5; border-radius: 9px; padding: 3px; } QListWidget::item:selected { background: #F0EDFE; border-color: #CBC4F7; } QListWidget::item:disabled { border: none; background: transparent; }")
+        self.task_list.itemClicked.connect(lambda item: self._open_task(item.data(Qt.ItemDataRole.UserRole)) if item.data(Qt.ItemDataRole.UserRole) else None)
         self.controls.append(self.task_list)
         box.addWidget(self.task_list, 1)
         self.empty_tasks = label("还没有任务，点击上方按钮添加。", muted=True)
@@ -400,6 +436,8 @@ class ReviewWindow(QMainWindow):
     def _progress(self, event):
         if self.progress_dialog:
             self.progress_dialog.update_progress(event)
+        if self.cache_dialog:
+            self.cache_dialog.update_progress(event)
 
     def _finished(self, callback, result, error):
         if self.closed:
@@ -414,6 +452,9 @@ class ReviewWindow(QMainWindow):
             self.progress_dialog = None
         self._refresh_enabled()
         if error:
+            if self.cache_dialog and self.cache_dialog.cleaning:
+                self.cache_dialog.set_cleaning(False)
+                self.cache_dialog.refresh()
             if cancelled:
                 self.status.setText("当前操作已停止，已保存结果保留。")
                 return
@@ -434,6 +475,8 @@ class ReviewWindow(QMainWindow):
 
     @staticmethod
     def _friendly_error(detail):
+        if "所选日期" in detail or "图片缓存正在清理" in detail:
+            return detail
         if "只有" in detail or "没有可审核" in detail or "没有抓到" in detail:
             return detail
         if any(word in detail.lower() for word in ("vpn", "内网", "connection", "timeout", "timed out", "远程通道")):
@@ -530,25 +573,25 @@ class ReviewWindow(QMainWindow):
             return
         key = job["key"]
         self.download_dialog.update_job(job)
-        if key not in self.job_items:
-            item = QListWidgetItem()
-            item.setData(Qt.ItemDataRole.UserRole, key)
-            item.setSizeHint(QSize(218, 103))
-            self.task_list.addItem(item)
-            widget = QWidget()
-            layout = QVBoxLayout(widget)
-            layout.setContentsMargins(8, 7, 8, 7)
-            layout.setSpacing(5)
-            name = label(job["name"])
-            name.setWordWrap(True)
-            name.setStyleSheet("font-size: 12px; font-weight: 500;")
-            layout.addWidget(name, 1)
-            detail = label("", muted=True)
-            detail.setWordWrap(True)
-            layout.addWidget(detail)
-            self.task_list.setItemWidget(item, widget)
-            self.job_items[key] = item, detail
-        item, detail = self.job_items[key]
+        previous = self.task_jobs.get(key)
+        self.task_jobs[key] = job
+        if key not in self.review_marks and key in self.task_reviews:
+            review = self.task_reviews[key]
+            self.review_marks[key] = "已同步轻推" if review["uploaded"] else "审核完成" if review["complete"] else f"审核 {review['valid']}/{review['target']}"
+        if key in self.job_items:
+            self._set_task_detail(job, *self.job_items[key])
+        if previous is None or previous["status"] != job["status"]:
+            self.task_refresh_timer.start()
+        snapshots = self.downloads.snapshots()
+        ready = sum(j["status"] == "ready" for j in snapshots)
+        active = sum(j["status"] in {"queued", "running", "stopping"} for j in snapshots)
+        self.download_status_button.setEnabled(True)
+        self.download_status_button.setText(f"下载进度  {ready}/{len(snapshots)}" + (f" · {active} 个后台任务" if active else ""))
+        if job["status"] == "ready" and not self.restoring:
+            self._maybe_open_ready()
+
+    def _set_task_detail(self, job, item, detail):
+        key = job["key"]
         status = {"queued": "排队", "running": "准备中", "stopping": "正在停止", "cancelled": "已停止 · 可继续",
                   "ready": self.review_marks.get(key, "可开始审核"), "failed": "失败 · 可重试", "paused": "待补齐缓存"}[job["status"]]
         if job["status"] == "running":
@@ -561,17 +604,113 @@ class ReviewWindow(QMainWindow):
         detail.setText(f"{job['business_date']}  ·  {status}")
         detail.setStyleSheet(f"font-size: 11px; color: {'#29946A' if job['status'] == 'ready' else '#B1874A' if job['status'] in {'failed','paused'} else '#8A829D'};")
         item.setToolTip(job["message"] + ("\n" + job["error"] if job["error"] else ""))
-        self.empty_tasks.hide()
-        snapshots = self.downloads.snapshots()
-        ready = sum(j["status"] == "ready" for j in snapshots)
-        active = sum(j["status"] in {"queued", "running", "stopping"} for j in snapshots)
-        self.download_status_button.setEnabled(True)
-        self.download_status_button.setText(f"下载进度  {ready}/{len(snapshots)}" + (f" · {active} 个后台任务" if active else ""))
-        if job["status"] == "ready" and not self.restoring:
-            self._maybe_open_ready()
+
+    def _all_task_rows(self):
+        return task_rows(self.downloads.snapshots(), self.project_by_id, self.task_reviews)
+
+    def _task_filters_changed(self, *_args):
+        self.task_query = replace(self.task_query, search=self.task_search.text().strip(), category=self.task_category.currentData())
+        self.preferences.setValue("task_query", json.dumps(self.task_query.to_dict(), ensure_ascii=False))
+        self.task_refresh_timer.start()
+
+    def _refresh_task_list(self):
+        if self.closed or not hasattr(self, "downloads"):
+            return
+        self.task_refresh_timer.stop()
+        rows = self._all_task_rows()
+        visible = filter_tasks(rows, self.task_query)
+        keys = {row["key"] for row in visible}
+        scroll = self.task_list.verticalScrollBar().value()
+        self.task_list.clear()
+        self.job_items = {}
+        group = None
+        for row in visible + [row for row in rows if row["key"] not in keys]:
+            show = row["key"] in keys
+            if show and group != row["category"]:
+                group = row["category"]
+                header = QListWidgetItem(f"{group}  ·  {sum(r['category'] == group for r in visible)} 项")
+                header.setFlags(Qt.ItemFlag.NoItemFlags)
+                header.setSizeHint(QSize(218, 28))
+                self.task_list.addItem(header)
+            item = QListWidgetItem()
+            item.setData(Qt.ItemDataRole.UserRole, row["key"])
+            item.setSizeHint(QSize(218, 103))
+            self.task_list.addItem(item)
+            widget = QWidget()
+            layout = QVBoxLayout(widget)
+            layout.setContentsMargins(8, 7, 8, 7)
+            layout.setSpacing(5)
+            name = label(row["name"])
+            name.setWordWrap(True)
+            name.setStyleSheet("font-size: 12px; font-weight: 500;")
+            layout.addWidget(name, 1)
+            detail = label("", muted=True)
+            detail.setWordWrap(True)
+            layout.addWidget(detail)
+            self.task_list.setItemWidget(item, widget)
+            self.job_items[row["key"]] = item, detail
+            self._set_task_detail(row, item, detail)
+            item.setHidden(not show)
+            if row["key"] == self.active_key: self.task_list.setCurrentItem(item)
+        self.task_list.verticalScrollBar().setValue(scroll)
+        self.task_count.setText(f"显示 {len(visible)} / {len(rows)} 项" + (f" · {self.task_query.start} 至 {self.task_query.end}" if self.task_query.start else ""))
+        self.task_count.setWordWrap(True)
+        self.empty_tasks.setText("没有符合条件的任务，请调整筛选。" if rows else "还没有任务，点击上方按钮添加。")
+        self.empty_tasks.setVisible(not visible)
+        if self.task_browser and self.task_browser.isVisible(): self.task_browser.update_rows(rows)
+
+    def show_task_browser(self):
+        if self.task_browser:
+            self.task_browser.hide()
+            self.task_browser.deleteLater()
+        self.task_browser = TaskBrowserDialog(self, self.task_query, self._all_task_rows())
+        self.task_browser.query_applied.connect(self._apply_task_query)
+        self.task_browser.open_task.connect(self._open_task)
+        self.task_browser.show()
+
+    def _apply_task_query(self, query):
+        self.task_query = query
+        for control in (self.task_search, self.task_category): control.blockSignals(True)
+        self.task_search.setText(query.search)
+        self.task_category.setCurrentIndex(max(0, self.task_category.findData(query.category)))
+        for control in (self.task_search, self.task_category): control.blockSignals(False)
+        self.preferences.setValue("task_query", json.dumps(query.to_dict(), ensure_ascii=False))
+        self._refresh_task_list()
+
+    def show_cache_manager(self):
+        if self.cache_dialog is None:
+            self.cache_dialog = CacheDialog(self, CacheStore(settings.storage.data_root),
+                lambda: {j['business_date'] for j in self.downloads.snapshots() if j['status'] in {'queued','running','stopping'}})
+            self.cache_dialog.clear_requested.connect(self.clear_cached_dates)
+        self.cache_dialog.show()
+        self.cache_dialog.raise_()
+        self.cache_dialog.refresh()
+
+    def clear_cached_dates(self, days):
+        if self.busy or self.closed:
+            if self.cache_dialog and not self.closed:
+                self.cache_dialog.selection.setText("当前操作尚未完成，请稍后再清理缓存。")
+            return
+        self.cache_dialog.set_cleaning(True)
+        def work():
+            with self.downloads.cache_cleanup(days):
+                return self.cache_dialog.store.clear(days, lambda n, total: self.signals.progress.emit({
+                    "stage": "cache_cleanup", "message": f"正在清理图片 {n:,} / {total:,}，审核记录保留…", "current": n, "total": total}))
+        self._run(work, self._cache_cleaned, "正在清理所选日期的图片缓存，审核记录保留…")
+
+    def _cache_cleaned(self, result):
+        if self.state and self.state["business_date"] in result["dates"]:
+            self._clear_review(self.state["target_size"])
+        self.cache_dialog.set_cleaning(False)
+        self.cache_dialog.refresh()
+        self._refresh_task_list()
+        self.status.setText(f"已清理 {result['removed']:,} 个图片文件，释放 {format_bytes(result['freed'])}；审核结果保留。"
+            + (f" {result['failed']} 个文件暂未删除，可稍后重试。" if result["failed"] else "需要时可在任务中继续拉取。"))
 
     def _maybe_open_ready(self):
         if self.closed or self.busy or self.restoring:
+            return
+        if self.cache_dialog and self.cache_dialog.isVisible():
             return
         if self.pending_open_key:
             key, self.pending_open_key = self.pending_open_key, None
@@ -585,9 +724,12 @@ class ReviewWindow(QMainWindow):
                 self._open_task(job["key"], activate=False)
 
     def _open_task(self, key, *, activate=True):
+        if not key:
+            return
         job = self.downloads.get(key)
         if job["status"] != "ready":
-            self.status.setText("该点位还在准备，可先审核其他已就绪的点位。")
+            self.status.setText("该任务的图片需要补齐，点击“继续拉取”即可沿用原审核记录。" if job["status"] in {"paused", "cancelled", "failed"}
+                                else "该点位还在准备，可先审核其他已就绪的点位。")
             self.show_download_progress()
             return
         if self.busy:
@@ -598,6 +740,8 @@ class ReviewWindow(QMainWindow):
             self.showNormal()
             self.raise_()
             self.activateWindow()
+        if key not in self.job_items:
+            self._refresh_task_list()
         self.task_list.setCurrentItem(self.job_items[key][0])
         if self.state and task_key(self.state["project_id"], self.state["business_date"]) == key:
             return
@@ -623,6 +767,10 @@ class ReviewWindow(QMainWindow):
         self.state, image = result
         state, item = self.state, self.state.get("current")
         self.active_key = task_key(state["project_id"], state["business_date"])
+        self.task_reviews[self.active_key] = {"valid": state["valid_count"], "target": state["target_size"],
+            "complete": state["complete"], "uploaded": state.get("uploaded", False), "updated": ""}
+        self.task_reviews.update(review_summaries())
+        self.task_refresh_timer.start()
         self.stats["progress"].setText(f"{state['valid_count']} / {state['target_size']}")
         self.review_progress.setMaximum(state["target_size"])
         self.review_progress.setValue(state["valid_count"])
@@ -683,10 +831,16 @@ class ReviewWindow(QMainWindow):
         if job:
             def done(result):
                 self.status.setText("同步成功 · 已写入轻推并完成回读校验。" if result.get("uploaded") else "统计已变更 · 将同步最新结果。")
+                if result.get("uploaded"):
+                    self.task_reviews.update(review_summaries())
+                    self.task_refresh_timer.start()
                 if self.state and self.state["project_id"] == job["project_id"] and self.state["business_date"] == job["business_date"] and result.get("uploaded"):
                     self.state["uploaded"] = True
                     self.saved_badge.setText("已同步轻推")
                     key = task_key(job["project_id"], job["business_date"])
+                    if key in self.task_reviews:
+                        self.task_reviews[key]["uploaded"] = True
+                    self.task_refresh_timer.start()
                     self.review_marks[key] = "已同步轻推"
                     if key in self.job_items:
                         self.job_items[key][1].setText(f"{job['business_date']}  ·  已同步轻推")
@@ -749,6 +903,7 @@ class ReviewWindow(QMainWindow):
             self.foreground_token.cancel()
         self.network_token.cancel()
         self.sync_timer.stop()
+        self.task_refresh_timer.stop()
         self.downloads.shutdown(cancel=True)
         self.download_dialog.hide()
         from PySide6.QtWidgets import QDialog

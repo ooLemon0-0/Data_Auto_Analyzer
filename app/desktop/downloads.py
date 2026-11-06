@@ -1,7 +1,8 @@
 """Independent point jobs; downloading never owns the foreground review lock."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
+from contextlib import contextmanager
 import json
 import logging
 from pathlib import Path
@@ -12,7 +13,7 @@ import uuid
 
 from app import db
 from app.core.progress import progress_scope, report_progress
-from app.core.cancellation import CancellationToken, WorkCancelled, cancel_pause, cancellable_lock, check_cancelled
+from app.core.cancellation import CancellationToken, WorkCancelled, cancel_pause, cancellable_lock, check_cancelled, cancellation_scope
 from app.core.executor import DaemonExecutor
 from app.services.review_service import ReviewService
 
@@ -37,6 +38,7 @@ class DownloadManager:
         self.jobs = {}
         self.futures = set()
         self.closed = False
+        self.cleaning_dates = set()
         self._route_locks = {}
         self.state_path = Path(state_path) if state_path else None
 
@@ -80,6 +82,8 @@ class DownloadManager:
         with self.lock:
             if self.closed:
                 raise RuntimeError("下载调度已关闭")
+            if str(business_date) in self.cleaning_dates:
+                raise RuntimeError("该日期的图片缓存正在清理，请稍后再拉取")
             for project_id in dict.fromkeys(project_ids):
                 project = self.projects[project_id]
                 key = task_key(project_id, business_date)
@@ -103,11 +107,12 @@ class DownloadManager:
         self._pump()
         return [j["key"] for j in published]
 
-    def restore_sessions(self, limit=40):
+    def restore_sessions(self, limit=None):
         """Restore local review tasks without logging in or touching the network."""
         restored = []
         with db.connect() as conn:
-            sessions = conn.execute("SELECT * FROM review_sessions ORDER BY updated_at DESC LIMIT ?", (limit,)).fetchall()
+            query = "SELECT * FROM review_sessions ORDER BY updated_at DESC"
+            sessions = conn.execute(query + " LIMIT ?", (limit,)).fetchall() if limit else conn.execute(query).fetchall()
             for session in sessions:
                 project = self.projects.get(session["project_id"])
                 if project is None:
@@ -121,13 +126,18 @@ class DownloadManager:
                 record_count = conn.execute("SELECT COUNT(*) FROM items WHERE project_id=? AND business_date=?",
                     (project.id, session["business_date"])).fetchone()[0]
                 key = task_key(project.id, session["business_date"])
+                try:
+                    created = datetime.fromisoformat(session["created_at"]).timestamp()
+                    updated = datetime.fromisoformat(session["updated_at"]).timestamp()
+                except (TypeError, ValueError):
+                    created = updated = time.time()
                 job = {"key": key, "project_id": project.id, "name": project.name,
                        "business_date": session["business_date"], "target": session["target_size"],
                        "status": "ready" if count == len(rows) else "paused", "stage": "images",
                        "message": "已从本地恢复，可以继续审核" if count == len(rows) else "点击补齐端面框复核图，已有原图和审核结果保留" if revision else "本地缓存不完整，点击重试补齐",
                        "current": count, "total": len(rows), "error": "", "host": self._host(project),
                        "attempt": uuid.uuid4().hex, "cache": None, "token": CancellationToken(),
-                       "created_at": time.time(), "started_at": None, "updated_at": time.time(), "finished_at": None,
+                       "created_at": created, "started_at": updated, "updated_at": updated, "finished_at": updated,
                        "images_ready": count, "images_total": len(rows), "records_current": record_count, "records_total": record_count}
                 with self.lock:
                     self.jobs.setdefault(key, job)
@@ -145,6 +155,9 @@ class DownloadManager:
                     key = task_key(project.id, day)
                     current = self.jobs.get(key)
                     if current and current["status"] == "ready" and current["target"] == target:
+                        for field in ("created_at", "started_at", "updated_at", "finished_at"):
+                            if old.get(field) is not None:
+                                current[field] = old[field]
                         continue
                     job = {**old, "key": key, "name": project.name, "target": target,
                            "host": self._host(project), "attempt": uuid.uuid4().hex,
@@ -178,7 +191,7 @@ class DownloadManager:
             for job in self.jobs.values():
                 if slots <= 0:
                     break
-                if job["status"] != "queued" or job["host"] in hosts:
+                if job["status"] != "queued" or job["host"] in hosts or job["business_date"] in self.cleaning_dates:
                     continue
                 job.update(status="running", stage="network", message="正在连接数据服务", started_at=time.time(), updated_at=time.time())
                 hosts.add(job["host"])
@@ -279,6 +292,57 @@ class DownloadManager:
         for job in snapshots:
             self.changed(job)
         return len(snapshots)
+
+    @contextmanager
+    def cache_cleanup(self, days):
+        selected = {date.fromisoformat(day).isoformat() for day in days}
+        with self.lock:
+            if any(j["business_date"] in selected and j["status"] in ACTIVE for j in self.jobs.values()):
+                raise RuntimeError("所选日期仍有拉取任务，请先停止这些任务，再清理缓存")
+            if selected & self.cleaning_dates:
+                raise RuntimeError("这些日期正在清理，请稍后刷新")
+            self.cleaning_dates.update(selected)
+        try:
+            yield
+        finally:
+            try:
+                # Reconcile even when a cleanup was interrupted partway through.
+                with cancellation_scope(None):
+                    self.refresh_cached_dates(selected)
+            finally:
+                with self.lock:
+                    self.cleaning_dates.difference_update(selected)
+                self._pump()
+
+    def refresh_cached_dates(self, days):
+        if self.closed:
+            return
+        jobs = [j for j in self.snapshots() if j["business_date"] in days]
+        snapshots = []
+        for job in jobs:
+            project = self.projects[job["project_id"]]
+            revision = self.service.image_cache_revision({"source": project.source})
+            with db.connect() as conn:
+                rows = conn.execute("""SELECT i.* FROM review_sessions s JOIN review_queue q ON q.session_id=s.id
+                    JOIN items i ON i.id=q.item_id WHERE s.project_id=? AND s.business_date=?""",
+                    (job["project_id"], job["business_date"])).fetchall()
+            count = sum(self.service._existing_image(row, revision) is not None for row in rows)
+            with self.lock:
+                if self.closed:
+                    return
+                live = self.jobs.get(job["key"])
+                if live is None or live["status"] in ACTIVE:
+                    continue
+                live.update(images_ready=count, images_total=len(rows) or live.get("images_total"), current=count,
+                            updated_at=time.time())
+                if rows and count < len(rows):
+                    live.update(status="paused", stage="images", message="图片缓存已清理，点击继续拉取；审核结果保留")
+                snapshots.append(self._public(live))
+        with self.lock:
+            if not self.closed:
+                self._save()
+        for job in snapshots:
+            self.changed(job)
 
     def shutdown(self, *, cancel=False):
         with self.lock:

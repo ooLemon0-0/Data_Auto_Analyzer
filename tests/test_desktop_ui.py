@@ -14,10 +14,8 @@ from app.desktop.widgets import ProgressDialog
 
 
 @pytest.fixture(scope="module")
-def app():
-    app = QApplication.instance() or QApplication([])
-    apply_theme(app)
-    return app
+def app(qapp):
+    return qapp
 
 
 def test_modal_progress_cannot_be_dismissed_while_downloading(app):
@@ -123,7 +121,7 @@ def test_batch_selection_first_ready_review_and_progress_hide_reopen(app, tmp_pa
     window = ReviewWindow(check_network=False)
     window.auto_upload.setChecked(False)
     window.show()
-    assert not window.findChildren(QComboBox)
+    assert window.task_category.currentData() == ""  # Point selection still uses the popup.
     first, slow = window.projects[:2]
     image = tmp_path / "photo.jpg"
     Image.new("RGB", (160, 100), "#667788").save(image)

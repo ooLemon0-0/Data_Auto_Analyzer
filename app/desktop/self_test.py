@@ -170,6 +170,46 @@ def run_self_test(output: Path) -> int:
             assert window.service.state(first.id, day)["correct"] == 1
             assert (test_dir / "download_tasks.json").exists()
             report["checks"]["cancel_download_preserves_saved_review"] = True
+            # Exercise actual managed image cleanup through the native UI.
+            from app.desktop.cache_store import CacheStore
+            from app.desktop.tasks import project_category
+            managed = []
+            with db.connect() as conn:
+                rows = conn.execute("SELECT * FROM items WHERE project_id IN (?,?) AND business_date=?",
+                                    (first.id, second.id, str(day))).fetchall()
+                for row in rows:
+                    destination = service._image_destination(row)
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    destination.write_bytes(sample.read_bytes())
+                    conn.execute("UPDATE items SET image_path=? WHERE id=?", (str(destination), row["id"]))
+                    managed.append(destination)
+            window.downloads.refresh_cached_dates([str(day)])
+            window.show_cache_manager()
+            pump_until(lambda: not window.cache_dialog.loading)
+            assert len(window.cache_dialog.entries) == 1
+            window.cache_dialog.select_all()
+            window.cache_dialog.grab().save(str(test_dir / "cache_manager.png"))
+            window.cache_dialog.clear_button.click()
+            assert window.cache_dialog.confirmation.isVisible() and all(p.exists() for p in managed)
+            window.cache_dialog.confirmation.confirm_button.click()
+            pump_until(lambda: not window.busy and not window.cache_dialog.loading)
+            assert all(not p.exists() for p in managed) and sample.exists()
+            assert window.service.state(first.id, day)["correct"] == 1
+            assert window.downloads.get(task_key(first.id, day))["status"] == "paused"
+            report["checks"]["cache_cleanup_preserves_audits"] = True
+            window.cache_dialog.hide()
+            window.show_task_browser()
+            browser = window.task_browser
+            browser.category.setCurrentIndex(browser.category.findData(project_category(first)))
+            browser.status.setCurrentIndex(browser.status.findData("paused"))
+            browser.search.setText(first.name)
+            assert browser.table.rowCount() == 1
+            browser.grab().save(str(test_dir / "task_browser.png"))
+            browser._apply()
+            window._refresh_task_list()
+            assert not window.job_items[task_key(first.id, day)][0].isHidden()
+            assert window.job_items[task_key(second.id, day)][0].isHidden()
+            report["checks"]["task_categories_and_filters"] = True
         finally:
             release.set()
             pump_until(lambda: not window.downloads.has_active() and not window.busy)

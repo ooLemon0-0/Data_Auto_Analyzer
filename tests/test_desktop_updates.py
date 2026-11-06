@@ -63,7 +63,7 @@ def test_missing_api_digest_uses_release_checksum_and_rejects_external_urls(monk
     info["assets"].append({"name": "SHA256SUMS.txt", "browser_download_url": checksum_url})
     session = Session({updates.LATEST_URL: json.dumps(info).encode(), checksum_url: f"{DIGEST}  AutoAnalyzer.exe\n".encode()})
     monkeypatch.setattr(updates, "http_session", lambda: session)
-    assert updates.check_for_update(CancellationToken()).sha256 == DIGEST
+    assert updates.check_for_update(CancellationToken(), current="1.4.0").sha256 == DIGEST
     info["assets"][0]["browser_download_url"] = "https://example.org/AutoAnalyzer.exe"
     session.data[updates.LATEST_URL] = json.dumps(info).encode()
     assert updates.check_for_update(CancellationToken()) is None
@@ -113,13 +113,12 @@ def test_windows_installer_receives_literal_paths_and_checksum(tmp_path, monkeyp
     assert current.read_bytes() == b"old" and not list(tmp_path.glob(".autoanalyzer*"))
 
 
-def test_update_dialog_skip_ignores_late_result_and_can_cancel_download(monkeypatch, tmp_path):
+def test_update_dialog_skip_ignores_late_result_and_can_cancel_download(monkeypatch, tmp_path, qapp):
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
     from app.desktop.update_dialog import UpdateDialog
     from app.desktop.theme import apply_theme
-    app = QApplication.instance() or QApplication([])
-    apply_theme(app)
+    app = qapp
     dialog = UpdateDialog()
     continued = []
     dialog.continue_startup.connect(lambda: continued.append(True))
@@ -138,15 +137,17 @@ def test_update_dialog_skip_ignores_late_result_and_can_cancel_download(monkeypa
     assert another.finished and another.token.cancelled
 
 
-def test_update_ui_deadline_skips_even_when_transport_never_returns(monkeypatch):
+def test_update_ui_deadline_skips_even_when_transport_never_returns(monkeypatch, qapp):
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     import time
-    from threading import Event
+    from threading import Event, current_thread
     from PySide6.QtWidgets import QApplication
     from app.desktop.update_dialog import UpdateDialog
-    app = QApplication.instance() or QApplication([])
+    app = qapp
     blocked, entered = Event(), Event()
+    workers = []
     def stuck(_token):
+        workers.append(current_thread())
         entered.set()
         blocked.wait(10)
     monkeypatch.setattr("app.desktop.update_dialog.check_for_update", stuck)
@@ -163,3 +164,6 @@ def test_update_ui_deadline_skips_even_when_transport_never_returns(monkeypatch)
         assert entered.is_set() and continued == [True] and dialog.token.cancelled
     finally:
         blocked.set()
+        for worker in workers:
+            worker.join(2)
+            assert not worker.is_alive()

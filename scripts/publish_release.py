@@ -46,6 +46,8 @@ def main():
         response = session.post(api + "/releases", json={"tag_name": tag, "target_commitish": commit,
             "name": f"数据抽样审核 {tag} · Windows", "draft": True, "prerelease": False,
             "body": "Windows 10/11 64 位便携版，下载 AutoAnalyzer.exe 即可运行。\n\n"
+                    "- 新增图片缓存管理：按采集日期统计占用，可批量清理，保留审核记录。\n"
+                    "- 本地任务支持镔鑫一期 / 二期、芜湖、瑞丰等分类，以及搜索、日期 / 状态筛选和排序。\n"
                     "- 启动时检查 GitHub 更新；网络不可用直接启动，可随时跳过检查或下载。\n"
                     "- 更新文件校验大小和 SHA-256，自动替换并重启，保留本地数据。\n"
                     "- 支持多点位并发拉取、清晰的分阶段进度、停止任务和中断退出后继续。\n"
