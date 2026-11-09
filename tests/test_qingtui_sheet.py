@@ -152,6 +152,7 @@ def test_binxin_projects_share_document_but_keep_distinct_sheets():
         "binxin_billet": "73-84",
         "binxin_billet_72": "1期-72",
         "binxin_billet_74": "1期-74",
+        "binxin_billet_88": "1期-88",
         "binxin_76": "76",
         "binxin_77": "77",
     }

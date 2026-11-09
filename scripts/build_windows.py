@@ -107,7 +107,7 @@ collection = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name='Aut
     digest = hashlib.file_digest(target.open("rb"), "sha256").hexdigest()
     update_manifest = {'version': VERSION, 'url': f'https://github.com/ooLemon0-0/Data_Auto_Analyzer/releases/download/v{VERSION}/AutoAnalyzer.exe',
         'sha256': digest, 'size': target.stat().st_size,
-        'notes': '审核完成后可选择自动同步轻推，或生成每日统计表并复制到 WPS / 轻推。'}
+        'notes': '新增镔鑫一期 88 点位，汇总两台 OCR 相机，支持后台拉取、完整原图审核及轻推同步或复制统计表。'}
     (release / 'update.json').write_text(json.dumps(update_manifest, ensure_ascii=False, indent=2), encoding='utf-8')
     (release / "SHA256SUMS.txt").write_text(f"{digest}  AutoAnalyzer.exe\n{digest}  {target.name}\n", encoding="utf-8")
     (release / "使用说明.txt").write_text(
@@ -125,6 +125,7 @@ collection = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name='Aut
         "   本地任务支持分类和搜索；“筛选 / 排序”可组合日期范围、审核状态及排序。\n"
         "2. 请先安装企业 EasyConnect 客户端。程序会检查并自动启动；VPN 登录或动态验证需本人完成。\n"
         "3. 点击“拉取数据 · 选择点位”，在弹窗里勾选多个点位、日期和每点有效样本数，再开始拉取。\n"
+        "   镔鑫一期新增 88 点位，两台 OCR 相机合并统计；轻推自动创建或更新“1期-88”工作表。\n"
         "   不同站点最多 4 个项目同时准备；镔鑫图片每点 4 路并发，全局最多 8 张同时下载。\n"
         "4. 任一点位就绪后即可先审核，其余任务继续后台下载。点击左侧任务切换审核点位。\n"
         "   进度窗口可收起或关闭，不会停止任务；点击主界面“下载进度”随时重新查看。\n"

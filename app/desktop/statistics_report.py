@@ -15,7 +15,7 @@ COUNTING_NOTE = ("总计包含所有已审核图片；遮挡、连字留空。�
 
 def point_name(project) -> str:
     # These are device numbers, not the different camera IDs in parentheses.
-    points = {"binxin_billet": "73", "binxin_billet_72": "72", "binxin_billet_74": "74"}
+    points = {"binxin_billet": "73", "binxin_billet_72": "72", "binxin_billet_74": "74", "binxin_billet_88": "88"}
     return points.get(project.id, project.name)
 
 

@@ -42,6 +42,12 @@ def run_self_test(output: Path) -> int:
             if project.enabled:
                 build_source(project.model_dump())
         report["checks"]["registered_sources"] = True
+        point88 = settings.project('binxin_billet_88')
+        assert point88.enabled and point88.category == '镔鑫一期'
+        assert len(point88.source['camera_names']) == 2
+        assert point88.sink['selectors']['sheet_name'] == '1期-88'
+        assert point88.sink['selectors']['create_sheet_if_missing']
+        report['checks']['embedded_88_point'] = True
         app = QApplication.instance() or QApplication([])
         apply_theme(app)
         QSettings.setDefaultFormat(QSettings.Format.IniFormat)
