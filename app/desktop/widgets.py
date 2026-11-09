@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import time
-from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QImage, QPainter, QPixmap, QTransform
+from PySide6.QtCore import QEvent, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QCursor, QImage, QPainter, QPixmap, QTransform
 from PySide6.QtWidgets import (QDialog, QFrame, QGraphicsScene, QGraphicsView, QHBoxLayout,
     QLabel, QPlainTextEdit, QProgressBar, QPushButton, QVBoxLayout, QWidget)
 
@@ -31,6 +31,7 @@ def button(text, callback=None, *, variant=None, glyph=None, color="#787E90"):
 
 class ImageViewer(QGraphicsView):
     zoom_changed = Signal(str)
+    save_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -44,12 +45,43 @@ class ImageViewer(QGraphicsView):
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
         self.setBackgroundBrush(QColor("#181C27"))
+        self._hovered = False
+        self.save_button = button('保存图片', self.save_requested.emit, glyph='download', color='#FFFFFF')
+        self.save_button.setParent(self.viewport())
+        self.save_button.setFixedSize(112, 38)
+        self.save_button.setToolTip('保存当前复核图到系统“下载”文件夹（完整分辨率）')
+        self.save_button.setAccessibleName('保存图片到下载文件夹')
+        self.save_button.setStyleSheet('QPushButton { background: #6658E8; color: white; border: 1px solid #8D82EE; '
+            'border-radius: 9px; font-weight: 600; } QPushButton:hover { background: #7769F0; } '
+            'QPushButton:disabled { background: #4A456D; color: #CBC6E6; }')
+        self.save_button.hide()
+        self.viewport().setMouseTracking(True)
+        self.viewport().installEventFilter(self)
 
     def set_image(self, image: QImage | None, *, reset=True):
         self.image = image
         if reset:
             self.rotation, self.zoom = 0, 1.0
         self.redraw()
+        self._update_save_button()
+
+    def _update_save_button(self):
+        self.save_button.setVisible(self._hovered and self.image is not None and not self.image.isNull())
+        self.save_button.move(max(8, self.viewport().width() - self.save_button.width() - 16), 16)
+        self.save_button.raise_()
+
+    def eventFilter(self, watched, event):
+        if watched is self.viewport():
+            if event.type() in (QEvent.Type.Enter, QEvent.Type.MouseMove):
+                self._hovered = True
+                self._update_save_button()
+            elif event.type() == QEvent.Type.Leave:
+                # Entering the overlay button must not make it disappear.
+                self._hovered = self.viewport().rect().contains(self.viewport().mapFromGlobal(QCursor.pos()))
+                self._update_save_button()
+            elif event.type() == QEvent.Type.Resize:
+                self._update_save_button()
+        return super().eventFilter(watched, event)
 
     def redraw(self):
         self.scene().clear()

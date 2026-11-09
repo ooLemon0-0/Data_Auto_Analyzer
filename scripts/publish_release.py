@@ -24,6 +24,7 @@ from app.desktop.updates import REPOSITORY
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--commit", required=True, help="Pushed source commit to release")
+    parser.add_argument("--release-dir", type=Path, help="Directory containing the verified release files")
     args = parser.parse_args()
     subprocess.run([sys.executable, str(ROOT / "scripts/check_source_secrets.py"), "--staged"], cwd=ROOT, check=True)
     commit = subprocess.check_output(["git", "rev-parse", args.commit], cwd=ROOT, text=True).strip()
@@ -46,6 +47,8 @@ def main():
         response = session.post(api + "/releases", json={"tag_name": tag, "target_commitish": commit,
             "name": f"数据抽样审核 {tag} · Windows", "draft": True, "prerelease": False,
             "body": "Windows 10/11 64 位便携版，下载 AutoAnalyzer.exe 即可运行。\n\n"
+                    "- 图片悬停时可一键保存到系统下载目录，保留完整分辨率、端面框及旋转方向。\n"
+                    "- 启动组件在本地解压，无需下载；区分首次准备、新版更新及组件修复，重复启动复用缓存。\n"
                     "- 图片缓存达到 10 GB 后，后台从最旧日期逐天自动清理，保留审核和同步记录。\n"
                     "- 自动清理跳过正在下载或审核的日期；不弹窗、不锁界面，退出无需等待。\n"
                     "- 启动时先显示加载窗口，运行文件安装后复用，减少重复解压等待。\n"
@@ -71,7 +74,10 @@ def main():
         ("数据抽样审核.exe", "AutoAnalyzer.exe", "application/octet-stream"),
         ("SHA256SUMS.txt", "SHA256SUMS.txt", "text/plain"),
         ("使用说明.txt", "README-Windows.txt", "text/plain")]:
-        local = ROOT / "release" / local_name
+        release_dir = args.release_dir or (ROOT / "release" / ("v" + VERSION))
+        if args.release_dir is None and not release_dir.is_dir():
+            release_dir = ROOT / "release"
+        local = release_dir / local_name
         digest = hashlib.file_digest(local.open("rb"), "sha256").hexdigest()
         if asset_name in existing:
             asset = existing[asset_name]

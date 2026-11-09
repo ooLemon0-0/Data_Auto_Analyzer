@@ -24,6 +24,7 @@ from app.desktop.downloads import DownloadManager, task_key
 from app.desktop.cache_store import CacheStore, format_bytes
 from app.desktop.cache_cleanup import CacheMaintenance, CACHE_CHECK_INTERVAL_MS
 from app.desktop.cache_dialog import CacheDialog
+from app.desktop.image_export import save_review_image
 from app.desktop.task_dialog import TaskBrowserDialog
 from app.desktop.tasks import CATEGORIES, TaskQuery, filter_tasks, project_category, review_summaries, task_rows
 from app.desktop.network import EasyConnectManager
@@ -42,6 +43,7 @@ class JobSignals(QObject):
     download_changed = Signal(object)
     network_finished = Signal(object)
     cache_cleaned = Signal(object)
+    image_saved = Signal(object, object)
 
 
 class ReviewWindow(QMainWindow):
@@ -82,6 +84,7 @@ class ReviewWindow(QMainWindow):
         self.signals.download_changed.connect(self._download_changed)
         self.signals.network_finished.connect(self._network_checked)
         self.signals.cache_cleaned.connect(self._background_cache_cleaned)
+        self.signals.image_saved.connect(self._image_saved)
         self._build()
         self.download_dialog = DownloadProgressDialog(self)
         self.download_dialog.open_review.connect(self._open_task)
@@ -360,6 +363,7 @@ class ReviewWindow(QMainWindow):
         self.image_stack.addWidget(empty)
         self.viewer = ImageViewer()
         self.viewer.zoom_changed.connect(self.zoom_label.setText)
+        self.viewer.save_requested.connect(self.save_current_image)
         self.image_stack.addWidget(self.viewer)
         layout.addWidget(self.image_stack, 1)
         bottom = QHBoxLayout()
@@ -900,6 +904,37 @@ class ReviewWindow(QMainWindow):
     def rotate(self):
         if not self.busy:
             self.viewer.rotate()
+
+    def save_current_image(self):
+        if self.closed or not self.state or self.viewer.image is None or not self.viewer.save_button.isEnabled():
+            return
+        from PySide6.QtGui import QImage
+        image = QImage(self.viewer.image)
+        rotation = self.viewer.rotation
+        state, item = self.state, self.state.get('current') or {}
+        project = self._current_project()
+        name = project.name if project else state['project_id']
+        day = state['business_date']
+        source_key = item.get('source_key') or item.get('item_id') or '样本'
+        self.viewer.save_button.setEnabled(False)
+        self.viewer.save_button.setText('正在保存…')
+        def work():
+            try:
+                path = save_review_image(image, name, day, source_key, rotation=rotation)
+                error = None
+            except Exception as exc:
+                logger.exception('Could not export review image')
+                path, error = None, str(exc)
+            if not self.closed:
+                self.signals.image_saved.emit(path, error)
+        Thread(target=work, name='image-export', daemon=True).start()
+
+    def _image_saved(self, path, error):
+        if self.closed:
+            return
+        self.viewer.save_button.setEnabled(True)
+        self.viewer.save_button.setText('保存图片')
+        self.status.setText('保存失败，请检查下载文件夹的权限和剩余空间。' if error else f'图片已保存：{path}')
 
     def _shortcut(self, callback):
         from PySide6.QtWidgets import QAbstractSpinBox, QLineEdit

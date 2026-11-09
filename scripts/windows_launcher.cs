@@ -41,6 +41,7 @@ internal sealed class LoadingForm : Form {
     long shownMs = -1, runtimeMs = -1, visibleMs = -1;
     long shownUtcTicks;
     string error = "";
+    string cacheStatus = "checking", startupReport;
 
     internal LoadingForm(string[] args) {
         for (int i = 0; i < args.Length; i++) {
@@ -139,7 +140,7 @@ internal sealed class LoadingForm : Form {
         string marker = Path.Combine(root, ".complete");
         string[] required = { "AutoAnalyzerCore.exe",
             "_internal/PySide6/QtCore.pyd", "_internal/PySide6/QtWidgets.pyd",
-            "_internal/desktop_assets/config.json" };
+            "_internal/desktop_assets/config.json", "_internal/desktop_assets/chromium/chrome.exe" };
         return Directory.Exists(FilePath(Path.Combine(root, "_internal"))) && Directory.GetFiles(FilePath(Path.Combine(root, "_internal")), "python3*.dll").Length > 0 &&
             File.Exists(FilePath(marker)) && File.ReadAllText(FilePath(marker)) == digest &&
             required.All(name => File.Exists(FilePath(Path.Combine(root, name))) && new FileInfo(FilePath(Path.Combine(root, name))).Length > 0);
@@ -155,6 +156,7 @@ internal sealed class LoadingForm : Form {
                 data = Path.Combine(local, "AutoAnalyzer");
             }
             data = Path.GetFullPath(data);
+            startupReport = Path.Combine(data, "logs", "startup-last.json");
             string runtime;
             using (var binary = new FileStream(self, FileMode.Open, FileAccess.Read, FileShare.Read)) {
                 if (binary.Length < 48) throw new InvalidDataException("启动文件不完整，请重新下载程序。");
@@ -175,6 +177,10 @@ internal sealed class LoadingForm : Form {
                             try { acquired = mutex.WaitOne(100); } catch (AbandonedMutexException) { acquired = true; }
                         }
                         if (!RuntimeComplete(runtime, digest)) {
+                            bool priorInstall = Directory.Exists(FilePath(Path.Combine(data, "app-runtime"))) &&
+                                Directory.GetDirectories(FilePath(Path.Combine(data, "app-runtime"))).Any(folder => File.Exists(FilePath(Path.Combine(folder, ".complete"))));
+                            cacheStatus = Directory.Exists(FilePath(runtime)) ? "repair" : priorInstall ? "update" : "first";
+                            string prepareTitle = cacheStatus == "repair" ? "修复本地组件" : cacheStatus == "update" ? "准备新版组件" : "准备程序组件";
                             using (var payload = new PayloadStream(binary, binary.Length - 48 - length, length)) {
                                 Post("校验运行文件", "正在校验程序内置文件", 0);
                                 using (var sha = SHA256.Create()) {
@@ -210,13 +216,13 @@ internal sealed class LoadingForm : Form {
                                             }
                                         }
                                         completed++;
-                                        Post("安装运行文件", String.Format("首次使用需安装一次：{0} / {1} 个文件", completed, archive.Entries.Count), completed * 100 / archive.Entries.Count);
+                                        Post(prepareTitle, String.Format("从本地程序解压，无需下载：{0} / {1} 个文件", completed, archive.Entries.Count), completed * 100 / archive.Entries.Count);
                                     }
                                 }
                             }
                             File.WriteAllText(FilePath(Path.Combine(runtime, ".complete")), digest);
                             extracted = true;
-                        }
+                        } else cacheStatus = "cached";
                     } finally { if (acquired) mutex.ReleaseMutex(); }
                 }
             }
@@ -266,12 +272,13 @@ internal sealed class LoadingForm : Form {
     }
 
     void WriteReport() {
-        if (report == null) return;
+        string destination = report ?? startupReport;
+        if (destination == null) return;
         try {
-            Directory.CreateDirectory(Path.GetDirectoryName(report));
-            string json = String.Format("{{\"shown_ms\":{0},\"runtime_ready_ms\":{1},\"qt_visible_ms\":{2},\"extracted\":{3},\"exit_code\":{4},\"error\":\"{5}\",\"shown_utc_ticks\":{6}}}",
-                shownMs, runtimeMs, visibleMs, extracted ? "true" : "false", Launcher.Result, error.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\r", "").Replace("\n", " "), shownUtcTicks);
-            File.WriteAllText(report, json, Encoding.UTF8);
+            Directory.CreateDirectory(Path.GetDirectoryName(destination));
+            string json = String.Format("{{\"shown_ms\":{0},\"runtime_ready_ms\":{1},\"qt_visible_ms\":{2},\"extracted\":{3},\"exit_code\":{4},\"error\":\"{5}\",\"shown_utc_ticks\":{6},\"cache_status\":\"{7}\"}}",
+                shownMs, runtimeMs, visibleMs, extracted ? "true" : "false", Launcher.Result, error.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\r", "").Replace("\n", " "), shownUtcTicks, cacheStatus);
+            File.WriteAllText(destination, json, Encoding.UTF8);
         } catch { }
     }
 

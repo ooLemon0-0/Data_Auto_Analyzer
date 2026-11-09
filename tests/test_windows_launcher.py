@@ -26,7 +26,7 @@ class Core { static int Main(string[] args) {
 } }''', encoding="utf-8")
     compiler = Path(os.environ["SystemRoot"]) / "Microsoft.NET/Framework64/v4.0.30319/csc.exe"
     subprocess.run([str(compiler), "/nologo", "/target:winexe", "/out:" + str(runtime / "AutoAnalyzerCore.exe"), str(code)], check=True)
-    for name in ("python313.dll", "PySide6/QtCore.pyd", "PySide6/QtWidgets.pyd", "desktop_assets/config.json"):
+    for name in ("python313.dll", "PySide6/QtCore.pyd", "PySide6/QtWidgets.pyd", "desktop_assets/config.json", "desktop_assets/chromium/chrome.exe"):
         path = runtime / "_internal" / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"fixture")
@@ -56,15 +56,38 @@ def test_window_precedes_payload_and_cached_runtime_recovers_missing_component(p
     marker = root / "argument report.txt"
     code, cold = run(package, exe, root / "cold.json", marker, 'a "quote"', "C:\\folder\\")
     assert code == 0 and cold["extracted"] and 0 <= cold["shown_ms"] < cold["runtime_ready_ms"]
+    assert cold['cache_status'] == 'first'
     assert cold["qt_visible_ms"] >= cold["runtime_ready_ms"]
     assert marker.read_text(encoding="utf-8").splitlines()[1:] == ['a "quote"', "C:\\folder\\"]
     code, warm = run(package, exe, root / "warm.json")
     assert code == 0 and warm["extracted"] is False
+    assert warm['cache_status'] == 'cached'
     component = root / "user/app-runtime" / info["payload_sha256"][:32] / "_internal/PySide6/QtWidgets.pyd"
     component.unlink()
     code, repair = run(package, exe, root / "repair.json")
     assert code == 0 and repair["extracted"] and component.is_file()
+    assert repair['cache_status'] == 'repair'
     assert canary.read_bytes() == b"existing audits"
+
+
+def test_repeated_and_renamed_package_reuses_components_without_touching_marker(package):
+    root, exe, info = package
+    user = root / 'repeat-user'
+    code, cold = run(package, exe, root / 'repeat-cold.json', data_root=user)
+    assert code == 0 and cold['cache_status'] == 'first'
+    marker = user / 'app-runtime' / info['payload_sha256'][:32] / '.complete'
+    modified = marker.stat().st_mtime_ns
+    renamed = root / '复制到另一个名字.exe'
+    import shutil
+    shutil.copyfile(exe, renamed)
+    for index, target in enumerate((exe, renamed, exe)):
+        code, report = run(package, target, root / f'repeat-{index}.json', data_root=user)
+        assert code == 0 and not report['extracted'] and report['cache_status'] == 'cached'
+        assert marker.stat().st_mtime_ns == modified
+    browser = marker.parent / '_internal/desktop_assets/chromium/chrome.exe'
+    browser.unlink()
+    code, report = run(package, exe, root / 'repair-browser.json', data_root=user)
+    assert code == 0 and report['cache_status'] == 'repair' and browser.is_file()
 
 
 def test_bad_payload_and_traversal_never_execute_or_escape_cache(package):

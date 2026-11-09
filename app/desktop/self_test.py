@@ -62,6 +62,18 @@ def run_self_test(output: Path) -> int:
         viewer.rotate()
         viewer.change_zoom(1.2)
         assert viewer.rotation == 1 and viewer.zoom == 1.2
+        from app.desktop.image_export import save_review_image
+        from PySide6.QtCore import QCoreApplication, QEvent
+        exported = save_review_image(QImage(str(rendered)), '本地自检', '2026-11-09', 'overlay',
+            rotation=1, directory=test_dir / 'Downloads')
+        assert QImage(str(exported)).width() == 80 and QImage(str(exported)).height() == 120
+        viewer.show()
+        app.processEvents()
+        QCoreApplication.sendEvent(viewer.viewport(), QEvent(QEvent.Type.Enter))
+        assert viewer.save_button.isVisible()
+        viewer.grab().save(str(test_dir / 'image-save-hover.png'))
+        viewer.hide()
+        report['checks']['full_resolution_image_export'] = True
         progress = ProgressDialog()
         progress.update_progress({"stage": "images", "message": "self-test", "current": 27, "total": 50})
         assert progress.progress.value() == 27 and progress.progress.maximum() == 50

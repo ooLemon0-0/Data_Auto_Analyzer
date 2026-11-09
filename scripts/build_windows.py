@@ -20,6 +20,8 @@ from app.desktop.bootstrap import VERSION
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, default=ROOT / "config/config.json")
+    parser.add_argument("--output-dir", type=Path, default=ROOT / "release")
+    parser.add_argument("--browser-executable", type=Path, help="Reuse an existing Chromium executable when building offline")
     args = parser.parse_args()
     if sys.platform != "win32":
         raise SystemExit("Windows exe 必须在 Windows 上构建")
@@ -35,8 +37,11 @@ def main():
         if project["id"] == "binxin_billet":
             project["sink"]["selectors"]["sheet_name"] = "1期-73"
     (stage / "config.json").write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
-    with sync_playwright() as playwright:
-        browser = Path(playwright.chromium.executable_path)
+    if args.browser_executable:
+        browser = args.browser_executable.resolve()
+    else:
+        with sync_playwright() as playwright:
+            browser = Path(playwright.chromium.executable_path)
     if not browser.exists():
         raise SystemExit("先执行 python -m playwright install chromium --no-shell 安装打包所需的浏览器")
     manifest = {"version": VERSION, "browser_revision": browser.parent.parent.name,
@@ -82,6 +87,10 @@ collection = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name='Aut
     # Do not allow another installed Python's packages to contaminate the bundle.
     env.pop("PYTHONPATH", None)
     env.pop("AUTOANALYZER_DESKTOP", None)
+    # PyInstaller inspects the user site path even under -I. Keep that probe
+    # inside the build directory, separate from unrelated user installations.
+    env["PYTHONUSERBASE"] = str(ROOT / "build/python-user")
+    env["PYINSTALLER_CONFIG_DIR"] = str(ROOT / "build/tool-cache")
     # Do not collect unrelated DLLs from developer tools on PATH (e.g. Poppler's
     # versioned ICU is incompatible with the Windows ICU API Qt imports).
     windows = Path(os.environ.get("SystemRoot", "C:/Windows"))
@@ -90,8 +99,8 @@ collection = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name='Aut
     subprocess.run([sys.executable, "-I", "-m", "PyInstaller", "--noconfirm", "--clean",
                     "--distpath", str(ROOT / "dist"), "--workpath", str(ROOT / "build/pyinstaller"), str(spec)],
                    cwd=ROOT, env=env, check=True)
-    release = ROOT / "release"
-    release.mkdir(exist_ok=True)
+    release = args.output_dir.resolve()
+    release.mkdir(parents=True, exist_ok=True)
     target = release / "数据抽样审核.exe"
     from scripts.windows_bundle import build_launcher
     launcher = build_launcher(ROOT / "dist/AutoAnalyzerRuntime", target, stage / "app.ico", stage=ROOT / "build/launcher")
@@ -101,6 +110,7 @@ collection = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name='Aut
         f"数据抽样审核 桌面版 {VERSION}（Windows 10/11 64 位）\n\n"
         "1. 双击“数据抽样审核.exe”，无需安装 Python 或浏览器，无需修改配置文件。\n"
         "   先显示加载窗口；运行文件只在首次使用或升级后安装，之后从本机缓存启动。\n"
+        "   组件从 EXE 本地解压，无需联网下载；重复打开同一版本会复用已解压文件。\n"
         "   加载窗口显示运行文件校验、组件安装、配置读取和本地任务恢复进度，可随时退出。\n"
         "   启动时自动检查 GitHub Releases；连接失败直接进入工作台，也可点击“跳过更新”。\n"
         "   发现新版可下载、校验并自动重启更新；下载时也可跳过，继续使用当前版本。\n"
@@ -119,6 +129,8 @@ collection = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name='Aut
         "   点击主窗口关闭，在提示中选“停止并退出”即可中断并退出，不必等整批结束。\n"
         "   未完成任务会保留点位、日期和样本数；下次打开可继续。已保存审核结果不丢失。\n"
         "5. 按 1 正确、2 错误、3 无效并自动补抽；R 旋转，滚轮缩放，拖动查看。\n"
+        "   鼠标移到图片上，右上角会显示“保存图片”；点击保存到系统“下载”文件夹。\n"
+        "   保存完整分辨率的复核图（含端面框和当前旋转方向），重名时自动另存，不覆盖。\n"
         "   镔鑫二期 172.30.37.* 点位优先显示带端面框的复核图。没有有效框坐标时会明确标注原图。\n"
         "   旧缓存重新拉取时会补齐坐标并生成复核图，复用已有原图、保留审核结果。\n"
         "6. 达到有效样本目标后默认自动上传轻推。同日期更新覆盖，不会重复追加。\n"
