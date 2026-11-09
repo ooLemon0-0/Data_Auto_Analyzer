@@ -48,7 +48,7 @@ def test_worker_modal_stays_responsive_and_failure_unlocks_workspace(app, tmp_pa
     window = ReviewWindow(check_network=False)
     assert window.auto_upload.isChecked()
     assert window.preferences.fileName().replace("\\", "/").startswith(tmp_path.as_posix())
-    window.auto_upload.setChecked(False)
+    window.manual_report.setChecked(True)
     window.show()
     notices = []
     monkeypatch.setattr(window, "_notice", lambda *a, **k: notices.append((a, k)))
@@ -82,7 +82,7 @@ def test_review_buttons_save_replenish_and_enable_upload_after_completion(app, t
     QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path / "preferences"))
     window = ReviewWindow(check_network=False)
     assert [b.text().split("快捷键 ")[-1] for b in window.decision_buttons] == ["1", "2", "3", "4"]
-    window.auto_upload.setChecked(False)
+    window.manual_report.setChecked(True)
     project = window._current_project()
     local = {"id": project.id, "daily_target": 2, "source": {}, "sink": {"enabled": False}}
     monkeypatch.setattr(window.service, "project_dict", lambda _pid: local)
@@ -120,7 +120,7 @@ def test_batch_selection_first_ready_review_and_progress_hide_reopen(app, tmp_pa
     from app.desktop.window import ReviewWindow
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "review.sqlite3")
     window = ReviewWindow(check_network=False)
-    window.auto_upload.setChecked(False)
+    window.manual_report.setChecked(True)
     window.show()
     assert window.task_category.currentData() == ""  # Point selection still uses the popup.
     first, slow = window.projects[:2]
@@ -214,7 +214,7 @@ def test_close_allows_stop_and_exit_with_download_running(app, tmp_path, monkeyp
     from app.desktop.window import ReviewWindow
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "review.sqlite3")
     window = ReviewWindow(check_network=False)
-    window.auto_upload.setChecked(False)
+    window.manual_report.setChecked(True)
     window.show()
     entered = Event()
     def prepare(*_a):

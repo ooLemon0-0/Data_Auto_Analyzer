@@ -11,7 +11,7 @@ import sys
 
 
 APP_NAME = "AutoAnalyzer"
-VERSION = "1.6.3"
+VERSION = "1.6.4"
 
 
 def resource_root() -> Path:

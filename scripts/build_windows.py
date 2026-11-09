@@ -107,7 +107,7 @@ collection = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name='Aut
     digest = hashlib.file_digest(target.open("rb"), "sha256").hexdigest()
     update_manifest = {'version': VERSION, 'url': f'https://github.com/ooLemon0-0/Data_Auto_Analyzer/releases/download/v{VERSION}/AutoAnalyzer.exe',
         'sha256': digest, 'size': target.stat().st_size,
-        'notes': '联网发现新版后自动更新；新增其他判定，保存前确认并只导出完整原始图片。'}
+        'notes': '审核完成后可选择自动同步轻推，或生成每日统计表并复制到 WPS / 轻推。'}
     (release / 'update.json').write_text(json.dumps(update_manifest, ensure_ascii=False, indent=2), encoding='utf-8')
     (release / "SHA256SUMS.txt").write_text(f"{digest}  AutoAnalyzer.exe\n{digest}  {target.name}\n", encoding="utf-8")
     (release / "使用说明.txt").write_text(
@@ -137,7 +137,12 @@ collection = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name='Aut
         "   只复制现场完整原始文件，不含端面框、局部裁剪和界面旋转；原图缺失会明确提示。\n"
         "   镔鑫二期 172.30.37.* 点位优先显示带端面框的复核图。没有有效框坐标时会明确标注原图。\n"
         "   旧缓存重新拉取时会补齐坐标并生成复核图，复用已有原图、保留审核结果。\n"
-        "6. 达到有效样本目标后默认自动上传轻推。同日期更新覆盖，不会重复追加。\n"
+        "6. 左侧“审核完成后”二选一：自动同步到轻推，或生成表格、手动复制；选择会记住。\n"
+        "   自动同步模式在达到有效样本目标后上传轻推。同日期更新覆盖，不会重复追加。\n"
+        "   手动复制模式不访问轻推、不重试以前的同步任务；审核完成后弹出每日统计表。\n"
+        "   表格默认显示当前任务日期，可切换日期；只列出已完成点位，可点“查看统计表”重新打开。\n"
+        "   点“复制整张表格”后在 WPS / 轻推中粘贴，可取消包含表头。遮挡、连字两列留空。\n"
+        "   表格总计含全部已审核图片；模糊与其他合并列入“其他”，正确率仍只按正确和错误计算。\n"
         "7. 首次上传或轻推登录过期时，在打开的浏览器中扫码 / 手机验证；会话保存在本机。\n"
         "8. 上传失败不丢失审核数据；网络问题会自动重试，也可点“立即同步 / 重试”。\n"
         "9. 本地缓存和审核进度位于 %LOCALAPPDATA%\\AutoAnalyzer，更新 exe 不会清除。\n"

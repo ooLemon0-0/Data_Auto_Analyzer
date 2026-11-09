@@ -10,7 +10,7 @@ import time
 
 from PySide6.QtCore import QDate, QObject, QSettings, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QImageReader, QKeySequence, QShortcut
-from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDateEdit, QFrame,
+from PySide6.QtWidgets import (QApplication, QButtonGroup, QRadioButton, QComboBox, QDateEdit, QFrame,
     QHBoxLayout, QLabel, QLineEdit, QMainWindow, QProgressBar, QScrollArea, QSizePolicy,
     QListWidget, QListWidgetItem, QSpinBox, QStackedWidget, QVBoxLayout, QWidget)
 
@@ -28,7 +28,8 @@ from app.desktop.image_export import save_original_image, downloads_directory
 from app.desktop.task_dialog import TaskBrowserDialog
 from app.desktop.tasks import CATEGORIES, TaskQuery, filter_tasks, project_category, review_summaries, task_rows
 from app.desktop.network import EasyConnectManager
-from app.desktop.sync import DesktopSync
+from app.desktop.sync import DesktopSync, fingerprint
+from app.desktop.statistics_report import StatisticsDialog
 from app.desktop.theme import app_icon, icon
 from app.desktop.widgets import ExitDialog, ImageViewer, NoticeDialog, ProgressDialog, button, label
 from app.services.review_service import ReviewService
@@ -60,6 +61,8 @@ class ReviewWindow(QMainWindow):
         self.job_items, self.review_marks = {}, {}
         self.task_jobs, self.task_reviews = {}, review_summaries()
         self.cache_dialog, self.task_browser = None, None
+        self.statistics_dialog = None
+        self.reported_completions = {}
         self.selection_dialog = None
         self.restoring = True
         self.network_checking = False
@@ -264,16 +267,25 @@ class ReviewWindow(QMainWindow):
         line = QFrame()
         line.setObjectName("line")
         box.addWidget(line)
-        box.addWidget(label("统计同步", section=True))
-        self.auto_upload = QCheckBox("审核完成后自动同步轻推")
-        self.auto_upload.setChecked(self.preferences.value("auto_upload", True, type=bool))
-        self.auto_upload.toggled.connect(lambda value: self.preferences.setValue("auto_upload", value))
-        self.controls.append(self.auto_upload)
+        box.addWidget(label("审核完成后", section=True))
+        self.completion_choices = QButtonGroup(self)
+        self.auto_upload = QRadioButton("自动同步到轻推")
+        self.manual_report = QRadioButton("生成表格，手动复制")
+        self.completion_choices.addButton(self.auto_upload)
+        self.completion_choices.addButton(self.manual_report)
+        previous_mode = 'sync' if self.preferences.value('auto_upload', True, type=bool) else 'table'
+        mode = self.preferences.value('completion_mode', previous_mode)
+        (self.manual_report if mode == 'table' else self.auto_upload).setChecked(True)
+        self.auto_upload.toggled.connect(lambda checked: self._completion_mode_changed('sync') if checked else None)
+        self.manual_report.toggled.connect(lambda checked: self._completion_mode_changed('table') if checked else None)
+        self.controls.extend((self.auto_upload, self.manual_report))
         box.addWidget(self.auto_upload)
-        self.upload_button = button("立即同步 / 重试", self.upload, glyph="cloud")
+        box.addWidget(self.manual_report)
+        self.upload_button = button("查看统计表" if mode == 'table' else "立即同步 / 重试", self.upload, glyph="cloud")
         box.addWidget(self.upload_button)
         self.auth_button = button("轻推登录与验证", self.authenticate, variant="ghost", glyph="shield")
         self.controls.append(self.auth_button)
+        self.auth_button.setVisible(mode != 'table')
         box.addWidget(self.auth_button)
         box.addStretch(1)
         network = QFrame()
@@ -841,10 +853,49 @@ class ReviewWindow(QMainWindow):
         self.review_marks[self.active_key] = "审核完成" if state["complete"] else f"审核 {state['valid_count']}/{state['target_size']}"
         if self.active_key in self.job_items:
             self.job_items[self.active_key][1].setText(f"{state['business_date']}  ·  {self.review_marks[self.active_key]}")
+        if self.statistics_dialog is not None and self.statistics_dialog.isVisible():
+            self.statistics_dialog.refresh()
         if self.auto_upload.isChecked() and self._current_project().sink.get("enabled"):
             if self.sync.enqueue(state):
                 self.status.setText("审核完成 · 正在准备同步轻推…")
                 QTimer.singleShot(100, self._try_sync)
+        elif self.manual_report.isChecked():
+            digest = fingerprint(state)
+            if not state['complete']:
+                self.reported_completions.pop(self.active_key, None)
+            elif self.reported_completions.get(self.active_key) != digest:
+                self.reported_completions[self.active_key] = digest
+                QTimer.singleShot(0, lambda day=state['business_date']: self._show_completed_statistics(day))
+
+    def _completion_mode_changed(self, mode):
+        self.preferences.setValue('completion_mode', mode)
+        self.preferences.setValue('auto_upload', mode == 'sync')
+        self.upload_button.setText('查看统计表' if mode == 'table' else '立即同步 / 重试')
+        self.auth_button.setVisible(mode == 'sync')
+        if self.state and self.state['complete']:
+            if mode == 'table':
+                self.reported_completions[self.active_key] = fingerprint(self.state)
+                self.show_statistics()
+            elif self._current_project().sink.get('enabled'):
+                self.sync.enqueue(self.state)
+        self._refresh_enabled()
+
+    def _show_completed_statistics(self, day):
+        # A queued completion callback must respect a mode change or exit.
+        if not self.closed and self.manual_report.isChecked():
+            self.show_statistics(day)
+
+    def show_statistics(self, day=None):
+        if self.closed:
+            return
+        selected_day = date.fromisoformat(day or (self.state or {}).get('business_date') or date.today().isoformat())
+        if self.statistics_dialog is None:
+            self.statistics_dialog = StatisticsDialog(selected_day, settings.projects, self)
+        else:
+            self.statistics_dialog.set_day(selected_day)
+        self.statistics_dialog.show()
+        self.statistics_dialog.raise_()
+        self.statistics_dialog.activateWindow()
 
     def decide(self, decision):
         if not self.state or self.busy:
@@ -863,12 +914,15 @@ class ReviewWindow(QMainWindow):
     def upload(self):
         if not self.state or not self.state["complete"] or self.busy:
             return
+        if self.manual_report.isChecked():
+            self.show_statistics()
+            return
         self.sync.enqueue(self.state)
         self.sync.retry(self.state["project_id"], self.state["business_date"])
         self._try_sync(force=True)
 
     def _try_sync(self, *, force=False):
-        if self.closed or self.busy or not (force or self.auto_upload.isChecked()):
+        if self.closed or self.busy or not self.auto_upload.isChecked():
             return
         if self.notice is not None and self.notice.isVisible():
             return

@@ -80,7 +80,7 @@ def test_desktop_confirmation_saves_raw_not_display_and_keeps_review_responsive(
     monkeypatch.setattr(settings.storage,'data_root',str(tmp_path/'cache'))
     monkeypatch.setattr(QStandardPaths,'writableLocation',lambda _kind:str(tmp_path/'Downloads'))
     window=ReviewWindow(check_network=False)
-    window.auto_upload.setChecked(False)
+    window.manual_report.setChecked(True)
     window.state={'project_id':window.projects[0].id,'business_date':'2026-11-09','current':{'source_key':'RAW/001','item_id':999}}
     window.viewer.set_image(picture());window.viewer.rotate();window.viewer.change_zoom(2)
     window.show()

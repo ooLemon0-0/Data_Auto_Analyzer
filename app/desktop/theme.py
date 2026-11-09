@@ -123,6 +123,10 @@ QSpinBox::down-arrow { image: url(ASSET_ROOT/down.svg); width: 12px; height: 12p
 QProgressBar { border: none; border-radius: 3px; background: #ECECF6; height: 6px; max-height: 6px; text-align: center; }
 QProgressBar::chunk { background: #7A6CEE; border-radius: 3px; }
 QCheckBox { spacing: 8px; color: #646C80; }
+QRadioButton { spacing: 9px; color: #555E74; padding: 3px 0; }
+QRadioButton::indicator { width: 16px; height: 16px; border: 1px solid #C4C9D7; border-radius: 9px; background: white; }
+QRadioButton::indicator:checked { border: 5px solid #6658E8; width: 8px; height: 8px; background: white; }
+QRadioButton::indicator:disabled { border-color: #D7DAE3; background: #F0F1F5; }
 QCheckBox::indicator { width: 16px; height: 16px; border-radius: 5px; border: 1px solid #CDD1DF; background: white; }
 QCheckBox::indicator:checked { background: #6658E8; border: 1px solid #6658E8; image: url(ASSET_ROOT/check.svg); }
 QScrollArea { border: none; background: transparent; }

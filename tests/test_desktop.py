@@ -158,7 +158,7 @@ def test_upload_rechecks_current_statistics_before_sending(sync):
     assert queue.due()["fingerprint"] == fingerprint(state)
 
 
-def test_manual_upload_still_runs_when_auto_upload_is_unchecked():
+def test_forced_sync_cannot_override_manual_table_mode():
     from app.desktop.window import ReviewWindow
     # This tests scheduler decisions, so avoid an uninitialized Qt object.
     window = SimpleNamespace()
@@ -171,6 +171,9 @@ def test_manual_upload_still_runs_when_auto_upload_is_unchecked():
     window._run = lambda *_args, **_kwargs: runs.append(True)
     ReviewWindow._try_sync(window)
     assert not runs
+    ReviewWindow._try_sync(window, force=True)
+    assert not runs
+    window.auto_upload = SimpleNamespace(isChecked=lambda: True)
     ReviewWindow._try_sync(window, force=True)
     assert runs == [True]
 

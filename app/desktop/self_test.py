@@ -113,7 +113,21 @@ def run_self_test(output: Path) -> int:
         assert Path(window.preferences.fileName()).is_relative_to(test_dir)
         assert window.auto_upload.isChecked(), "新用户应默认自动同步"
         report["checks"]["isolated_preferences"] = True
-        window.auto_upload.setChecked(False)
+        window.manual_report.setChecked(True)
+        from app.desktop.statistics_report import StatisticsDialog, clipboard_formats, copy_statistics
+        statistics = StatisticsDialog(day, settings.projects, window)
+        assert statistics.rows, '已完成的审核应出现在每日统计表'
+        plain, html = clipboard_formats(statistics.rows)
+        assert plain.startswith('日期\t点位\t') and '<table' in html
+        assert statistics.rows[0][5:7] == ['', '']
+        copy_statistics(statistics.rows)
+        assert app.clipboard().mimeData().hasHtml() and app.clipboard().text() == plain
+        statistics.show()
+        app.processEvents()
+        statistics.grab().save(str(test_dir / 'daily-statistics.png'))
+        app.clipboard().clear()
+        report['checks']['manual_statistics_table'] = True
+        statistics.close()
         window.resize(1280, 800)
         window.show()
         app.processEvents()

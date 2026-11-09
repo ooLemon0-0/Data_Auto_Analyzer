@@ -219,7 +219,7 @@ def test_background_cleanup_keeps_desktop_responsive_and_exits_immediately(qapp,
     current = photo(root, "2026-11-02", 60)
     entered, release = Event(), Event()
     window = ReviewWindow(check_network=False)
-    window.auto_upload.setChecked(False)
+    window.manual_report.setChecked(True)
     window.show()
     window.cache_maintenance.limit = 100
     original = window.cache_maintenance.store.clear
