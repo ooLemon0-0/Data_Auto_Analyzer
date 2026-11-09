@@ -1,4 +1,4 @@
-"""Optional GitHub Release updates; never need repository credentials on clients."""
+"""Verified mandatory updates with an explicit offline-only exception."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -12,6 +12,7 @@ import sys
 import time
 from urllib.parse import urlsplit
 import uuid
+import requests
 
 from app.core.cancellation import CancellationToken, cancellation_scope
 from app.core.http import http_session
@@ -48,49 +49,84 @@ def _asset_url(value):
 
 
 def _read_small(session, url, token, *, limit=1_048_576, deadline=None):
-    with session.get(url, timeout=(2, 3), stream=True) as response:
+    with session.get(url, timeout=(4, 8), stream=True) as response:
         response.raise_for_status()
         chunks, count = [], 0
         for chunk in response.iter_content(16384):
             token.check()
             count += len(chunk)
-            if count > limit or (deadline is not None and time.monotonic() > deadline):
-                raise ValueError("更新检查响应过大或超时")
+            if count > limit:
+                raise ValueError('更新响应过大')
+            if deadline is not None and time.monotonic() > deadline:
+                raise TimeoutError('更新服务未及时响应')
             chunks.append(chunk)
         return b"".join(chunks)
 
 
-def check_for_update(token: CancellationToken, current=VERSION) -> Release | None:
-    """All network / metadata failures mean continue startup, without a prompt."""
-    try:
-        with cancellation_scope(token), http_session() as session:
-            session.headers.update({"Accept": "application/vnd.github+json",
-                                    "User-Agent": f"AutoAnalyzer/{current}",
-                                    "X-GitHub-Api-Version": "2026-03-10"})
-            deadline = time.monotonic() + 6
-            metadata = json.loads(_read_small(session, LATEST_URL, token, deadline=deadline))
-            version = str(metadata["tag_name"]).removeprefix("v")
-            if metadata.get("draft") or metadata.get("prerelease") or version_tuple(version) <= version_tuple(current):
-                return None
-            assets = metadata.get("assets", [])
-            asset = next(a for a in assets if a.get("name") == ASSET_NAME and a.get("state") == "uploaded")
-            url, size = asset["browser_download_url"], int(asset["size"])
-            if not _asset_url(url) or size < 2 or size > 2_000_000_000:
-                return None
-            digest = str(asset.get("digest") or "").removeprefix("sha256:")
-            if not re.fullmatch(r"[a-fA-F0-9]{64}", digest):
-                checksum = next(a for a in assets if a.get("name") == "SHA256SUMS.txt")
-                if not _asset_url(checksum["browser_download_url"]):
-                    return None
-                lines = _read_small(session, checksum["browser_download_url"], token, limit=16384, deadline=deadline).decode("utf-8-sig")
-                digest = next(line.split()[0] for line in lines.splitlines()
-                              if len(line.split()) == 2 and line.split()[1].lstrip("*") == ASSET_NAME)
-            if not re.fullmatch(r"[a-fA-F0-9]{64}", digest):
-                return None
-            token.check()
-            return Release(version, url, digest.lower(), size, str(metadata.get("body") or "")[:2400])
-    except Exception:
+class UpdateUnavailable(RuntimeError):
+    """Neither update endpoint could be reached."""
+
+
+class UpdateMetadataError(RuntimeError):
+    """The service responded, but an update could not be safely verified."""
+
+
+LATEST_MANIFEST_URL = f"https://github.com/{REPOSITORY}/releases/latest/download/update.json"
+CHECK_DEADLINE_SECONDS = 30
+
+
+def _release_from_metadata(metadata, current, session, token, deadline):
+    version = str(metadata.get('tag_name', metadata.get('version', ''))).removeprefix('v')
+    parsed = version_tuple(version)
+    if metadata.get('draft') or metadata.get('prerelease') or parsed <= version_tuple(current):
         return None
+    if 'assets' in metadata:
+        asset = next(a for a in metadata['assets'] if a.get('name') == ASSET_NAME and a.get('state') == 'uploaded')
+        url, size = asset['browser_download_url'], int(asset['size'])
+        digest = str(asset.get('digest') or '').removeprefix('sha256:')
+        if not re.fullmatch(r'[a-fA-F0-9]{64}', digest):
+            checksum = next(a for a in metadata['assets'] if a.get('name') == 'SHA256SUMS.txt')
+            if not _asset_url(checksum['browser_download_url']):
+                raise ValueError('Invalid checksum address')
+            lines = _read_small(session, checksum['browser_download_url'], token, limit=16384, deadline=deadline).decode('utf-8-sig')
+            digest = next(line.split()[0] for line in lines.splitlines()
+                if len(line.split()) == 2 and line.split()[1].lstrip('*') == ASSET_NAME)
+    else:
+        url, size, digest = metadata['url'], int(metadata['size']), str(metadata['sha256'])
+    if not _asset_url(url) or not url.endswith('/' + ASSET_NAME) or not 2 <= size <= 2_000_000_000:
+        raise ValueError('Invalid update asset')
+    if not re.fullmatch(r'[a-fA-F0-9]{64}', digest):
+        raise ValueError('Invalid update checksum')
+    return Release(version, url, digest.lower(), size, str(metadata.get('body', metadata.get('notes', '')))[:2400])
+
+
+def check_for_update(token: CancellationToken, current=VERSION) -> Release | None:
+    """None means verified current. Connectivity and metadata errors are distinct."""
+    network_errors, service_errors = [], []
+    deadline = time.monotonic() + CHECK_DEADLINE_SECONDS - 2
+    for endpoint in (LATEST_URL, LATEST_MANIFEST_URL):
+        token.check()
+        try:
+            with cancellation_scope(token), http_session() as session:
+                session.headers.update({'Accept': 'application/vnd.github+json',
+                    'User-Agent': f'AutoAnalyzer/{current}', 'X-GitHub-Api-Version': '2026-03-10',
+                    'Cache-Control': 'no-cache'})
+                metadata = json.loads(_read_small(session, endpoint, token, deadline=deadline))
+                return _release_from_metadata(metadata, current, session, token, deadline)
+        except requests.exceptions.SSLError as error:
+            service_errors.append(type(error).__name__)
+        except (requests.ConnectionError, requests.Timeout) as error:
+            network_errors.append(type(error).__name__)
+        except requests.RequestException as error:
+            service_errors.append(type(error).__name__)
+        except OSError as error:
+            network_errors.append(type(error).__name__)
+        except Exception as error:
+            token.check()
+            service_errors.append(type(error).__name__)
+    if service_errors:
+        raise UpdateMetadataError('已连接更新服务，但版本信息或校验信息未通过验证。请重试或退出，不能跳过更新。')
+    raise UpdateUnavailable('无法连接更新服务。可以重试，或离线进入当前版本。')
 
 
 def download_update(release: Release, token: CancellationToken, progress, root=None) -> Path:
@@ -104,7 +140,7 @@ def download_update(release: Release, token: CancellationToken, progress, root=N
     try:
         with cancellation_scope(token), http_session() as session:
             session.headers["User-Agent"] = f"AutoAnalyzer/{VERSION}"
-            with session.get(release.url, stream=True, timeout=(3, 5)) as response:
+            with session.get(release.url, stream=True, timeout=(8, 30)) as response:
                 response.raise_for_status()
                 digest, count, header = hashlib.sha256(), 0, b""
                 with partial.open("wb") as output:

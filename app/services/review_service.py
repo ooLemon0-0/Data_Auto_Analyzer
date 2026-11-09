@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import random
 from concurrent.futures import as_completed
 from contextvars import copy_context
@@ -262,6 +263,46 @@ class ReviewService:
             raise RuntimeError("Review session has not been prepared yet")
         return session
 
+    def materialize_original_image(self, item_id: int) -> Path:
+        """Require an explicit full-frame source. Never export a review/crop image."""
+        with db.connect() as conn:
+            row = conn.execute('SELECT * FROM items WHERE id=?', (item_id,)).fetchone()
+        if row is None:
+            raise KeyError('未找到原始记录')
+        metadata = json.loads(row['metadata_json'] or '{}')
+        url = str(metadata.get('original_image_url') or '').strip()
+        project = self.project_dict(row['project_id'])
+        if not url:
+            # Older indices may only contain a crop URL. Refresh metadata by
+            # source key, retaining the existing queue and saved decisions.
+            db.upsert_items(row['project_id'], row['business_date'],
+                build_source(project).fetch_day(date.fromisoformat(row['business_date'])))
+            with db.connect() as conn:
+                row = conn.execute('SELECT * FROM items WHERE id=?', (item_id,)).fetchone()
+            metadata = json.loads(row['metadata_json'] or '{}')
+            url = str(metadata.get('original_image_url') or '').strip()
+        if not url:
+            raise RuntimeError('此记录没有可确认的完整原图地址，不能用框图或局部图替代。请重新拉取该点位后再试。')
+        suffix = Path(urlparse(url).path).suffix.lower()
+        if suffix not in {'.jpg', '.jpeg', '.png', '.webp', '.bmp', '.tif', '.tiff'}:
+            suffix = '.jpg'
+        images = Path(settings.storage.data_root).resolve() / row['project_id'] / row['business_date'] / 'images'
+        name = hashlib.sha256(url.encode()).hexdigest() + suffix
+        # Phase 2 stores its unmodified full frame separately from the overlay.
+        known_raw = images / 'originals' / name
+        destination = images / 'export-originals' / name
+        with _INDEX_LOCK:
+            lock = _INDEX_LOCKS.setdefault(('original', str(destination)), RLock())
+        with cancellable_lock(lock):
+            path = known_raw if known_raw.is_file() else destination
+            if not path.is_file():
+                with cancellable_lock(_IMAGE_SLOTS):
+                    path = Path(build_source(project).materialize_image(url, destination))
+            from PIL import Image
+            with Image.open(path) as original:
+                original.verify()
+            return path
+
     def _rebalance_queue(self, conn, session) -> None:
         target = int(session["target_size"])
 
@@ -324,7 +365,7 @@ class ReviewService:
             )
 
     def decide(self, project_id: str, business_date: date, queue_id: int, decision: str) -> dict[str, Any]:
-        if decision not in {"correct", "incorrect", "invalid"}:
+        if decision not in {"correct", "incorrect", "invalid", "other"}:
             raise ValueError(f"Unsupported decision: {decision}")
         with db.connect() as conn:
             session = self._session(conn, project_id, business_date)
@@ -339,6 +380,8 @@ class ReviewService:
                 (decision, datetime.now().isoformat(timespec="seconds"), queue_id),
             )
             self._rebalance_queue(conn, session)
+            conn.execute('UPDATE review_sessions SET updated_at=? WHERE id=?',
+                (datetime.now().isoformat(timespec='seconds'), session['id']))
         return self.state(project_id, business_date, focus_queue_id=queue_id, move="next")
 
     def state(
@@ -373,6 +416,7 @@ class ReviewService:
         correct = sum(e["decision"] == "correct" for e in entries)
         incorrect = sum(e["decision"] == "incorrect" for e in entries)
         invalid = sum(e["decision"] == "invalid" for e in entries)
+        other = sum(e["decision"] == "other" for e in entries)
         valid = correct + incorrect
         target = int(session_dict["target_size"])
         complete = valid >= target
@@ -406,6 +450,7 @@ class ReviewService:
             "correct": correct,
             "incorrect": incorrect,
             "invalid": invalid,
+            "other": other,
             "valid_count": valid,
             "accuracy": accuracy,
             "complete": complete,
@@ -493,6 +538,8 @@ class ReviewService:
 
             "invalid":
                 state["invalid"],
+
+            "other": state["other"],
 
             "accuracy":
                 round(

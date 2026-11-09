@@ -81,7 +81,7 @@ def test_review_buttons_save_replenish_and_enable_upload_after_completion(app, t
     QSettings.setDefaultFormat(QSettings.Format.IniFormat)
     QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path / "preferences"))
     window = ReviewWindow(check_network=False)
-    assert [b.text().split("快捷键 ")[-1] for b in window.decision_buttons] == ["1", "2", "3"]
+    assert [b.text().split("快捷键 ")[-1] for b in window.decision_buttons] == ["1", "2", "3", "4"]
     window.auto_upload.setChecked(False)
     project = window._current_project()
     local = {"id": project.id, "daily_target": 2, "source": {}, "sink": {"enabled": False}}

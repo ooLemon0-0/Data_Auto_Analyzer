@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-Decision = Literal["correct", "incorrect", "invalid"]
+Decision = Literal["correct", "incorrect", "invalid", "other"]
 
 
 @dataclass(slots=True)

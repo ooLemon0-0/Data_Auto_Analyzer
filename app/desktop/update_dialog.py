@@ -1,153 +1,132 @@
-"""Cancelable startup update card. Late worker results cannot reopen it."""
-from __future__ import annotations
-
+"""A required update gate; only a verified connectivity failure allows offline use."""
 from threading import Thread
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtWidgets import QDialog, QHBoxLayout, QPlainTextEdit, QProgressBar, QVBoxLayout
-
+import requests
 from app.core.cancellation import CancellationToken
 from app.desktop.bootstrap import VERSION
-from app.desktop.updates import check_for_update, download_update, launch_installer
+from app.desktop.updates import (CHECK_DEADLINE_SECONDS, UpdateUnavailable, check_for_update, download_update, launch_installer)
 from app.desktop.widgets import button, label
 
 
 class UpdateDialog(QDialog):
     continue_startup = Signal()
     install_started = Signal()
-    checked = Signal(object)
-    downloaded = Signal(object, object)
-    failed = Signal(str)
-    progress_changed = Signal(int, int)
+    exit_requested = Signal()
+    checked = Signal(int, object, object)
+    downloaded = Signal(int, object, object)
+    failed = Signal(int, object)
+    progress_changed = Signal(int, int, int)
     update_available = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("检查应用更新")
+        self.setWindowTitle('应用更新')
         self.setWindowModality(Qt.WindowModality.ApplicationModal)
         self.setFixedWidth(550)
         self.token, self.finished, self.release = CancellationToken(), False, None
-        box = QVBoxLayout(self)
-        box.setContentsMargins(28, 26, 28, 24)
-        box.setSpacing(16)
-        self.title = label("正在检查更新", heading=True)
-        box.addWidget(self.title)
-        self.message = label(f"当前版本 {VERSION} · 正在连接 GitHub。连接失败会直接进入工作台，也可以现在跳过。", muted=True)
-        self.message.setWordWrap(True)
-        box.addWidget(self.message)
-        self.notes = QPlainTextEdit()
-        self.notes.setReadOnly(True)
-        self.notes.setMaximumHeight(150)
-        self.notes.hide()
-        box.addWidget(self.notes)
-        self.progress = QProgressBar()
-        self.progress.setTextVisible(False)
-        self.progress.setRange(0, 0)
-        box.addWidget(self.progress)
-        actions = QHBoxLayout()
-        actions.addStretch()
-        self.skip_button = button("跳过更新", self.skip)
-        actions.addWidget(self.skip_button)
-        self.update_button = button("立即更新", self.start_download, variant="primary")
-        self.update_button.hide()
-        actions.addWidget(self.update_button)
+        self.generation, self.state = 0, 'checking'
+        box = QVBoxLayout(self); box.setContentsMargins(28,26,28,24); box.setSpacing(16)
+        self.title = label('正在检查更新', heading=True); box.addWidget(self.title)
+        self.message = label(f'当前版本 {VERSION}。发现新版后将自动更新，完成后进入程序。', muted=True)
+        self.message.setWordWrap(True); box.addWidget(self.message)
+        self.notes = QPlainTextEdit(); self.notes.setReadOnly(True); self.notes.setMaximumHeight(150); self.notes.hide(); box.addWidget(self.notes)
+        self.progress = QProgressBar(); self.progress.setTextVisible(False); self.progress.setRange(0,0); box.addWidget(self.progress)
+        actions = QHBoxLayout(); actions.addStretch()
+        self.exit_button = button('退出程序', self.exit); actions.addWidget(self.exit_button)
+        self.skip_button = button('离线进入', self.skip); self.skip_button.hide(); actions.addWidget(self.skip_button)
+        self.update_button = button('重试', self.retry, variant='primary'); self.update_button.hide(); actions.addWidget(self.update_button)
         box.addLayout(actions)
-        self.checked.connect(self._checked)
-        self.downloaded.connect(self._downloaded)
-        self.failed.connect(self._failed)
-        self.progress_changed.connect(self._progress)
-        self.check_timer = QTimer(self)
-        self.check_timer.setSingleShot(True)
-        self.check_timer.timeout.connect(self.skip)
+        self.checked.connect(self._checked); self.downloaded.connect(self._downloaded)
+        self.failed.connect(self._failed); self.progress_changed.connect(self._progress)
+        self.check_timer = QTimer(self); self.check_timer.setSingleShot(True); self.check_timer.timeout.connect(self._check_timeout)
 
     def begin(self, *, show=True):
-        if show:
-            self.show()
-        # DNS and third-party transports can ignore their own connect timeout.
-        # This UI deadline still lets the workbench start within six seconds.
-        self.check_timer.start(6000)
+        if self.finished: return
+        if show: self.show()
+        self.generation += 1
+        generation = self.generation
+        self.token.cancel(); self.token = CancellationToken(); token = self.token
+        self.state = 'checking'; self.release = None
+        self.title.setText('正在检查更新'); self.message.setText(f'当前版本 {VERSION}。正在验证最新版本…')
+        self.skip_button.hide(); self.update_button.hide(); self.notes.hide(); self.progress.setRange(0,0); self.progress.show()
+        self.check_timer.start(CHECK_DEADLINE_SECONDS * 1000)
         def work():
-            result = check_for_update(self.token)
-            if not self.finished:
-                self.checked.emit(result)
+            try: result, error = check_for_update(token), None
+            except Exception as exc: result, error = None, exc
+            if not self.finished: self.checked.emit(generation, result, error)
         QTimer.singleShot(0, lambda: Thread(target=work, daemon=True).start())
 
-    def _checked(self, release):
-        if self.finished:
-            return
+    def _checked(self, generation, release, error=None):
+        if self.finished or generation != self.generation or self.state != 'checking': return
         self.check_timer.stop()
+        if error is not None:
+            self._failed(generation, error); return
         if release is None:
-            self.skip()
-            return
-        self.release = release
-        self.update_available.emit()
-        self.show()
-        self.title.setText(f"发现新版本 {release.version}")
-        self.message.setText(f"当前 {VERSION} → {release.version} · {release.size / 1048576:.1f} MB\n更新会保留本机图片、审核结果和登录状态。")
-        self.progress.hide()
-        self.notes.setPlainText(release.notes or "维护更新")
-        self.notes.show()
-        self.update_button.show()
+            self.finished = True; self.state = 'finished'; self.hide(); self.continue_startup.emit(); return
+        self.release = release; self.state = 'required'
+        self.update_available.emit(); self.show()
+        self.title.setText(f'需要更新到 {release.version}')
+        self.message.setText(f'当前 {VERSION} → {release.version}。更新会保留图片、审核结果和登录状态。')
+        self.notes.setPlainText(release.notes or '应用更新'); self.notes.show()
+        self.skip_button.hide()
+        QTimer.singleShot(0, self.start_download)
 
     def start_download(self):
-        if self.finished or self.release is None:
-            return
-        self.token = CancellationToken()
-        self.update_button.hide()
-        self.notes.hide()
-        self.title.setText("正在下载更新")
-        self.message.setText("下载完成并校验后会重启应用。你可以随时跳过，继续使用当前版本。")
-        self.progress.setRange(0, 1000)
-        self.progress.setValue(0)
-        self.progress.show()
-        token, release = self.token, self.release
+        if self.finished or self.release is None or self.state == 'downloading': return
+        self.generation += 1; generation = self.generation
+        self.token.cancel(); self.token = CancellationToken(); token = self.token
+        self.state = 'downloading'; release = self.release
+        self.skip_button.hide(); self.update_button.hide(); self.notes.hide()
+        self.title.setText('正在更新'); self.message.setText('下载并校验后将自动重启。完成更新前不能进入旧版。')
+        self.progress.setRange(0,1000); self.progress.setValue(0); self.progress.show()
         def work():
             try:
-                path = download_update(release, token, lambda n, total: self.progress_changed.emit(n, total) if not self.finished else None)
-                if not self.finished:
-                    self.downloaded.emit(path, release)
-            except Exception as exc:
-                if not self.finished:
-                    self.failed.emit(str(exc))
-        Thread(target=work, daemon=True).start()
+                path = download_update(release, token, lambda n,total: self.progress_changed.emit(generation,n,total) if not self.finished else None)
+                if not self.finished: self.downloaded.emit(generation,path,release)
+            except Exception as error:
+                if not self.finished: self.failed.emit(generation,error)
+        Thread(target=work,daemon=True).start()
 
-    def _progress(self, current, total):
-        if not self.finished:
+    def _progress(self, generation, current, total):
+        if not self.finished and generation == self.generation:
             self.progress.setValue(int(current * 1000 / total))
-            self.message.setText(f"已下载 {current / 1048576:.1f} / {total / 1048576:.1f} MB · 完成校验后重启；可以随时跳过。")
+            self.message.setText(f'已下载 {current/1048576:.1f} / {total/1048576:.1f} MB，正在完成更新。')
 
-    def _downloaded(self, path, release):
-        if self.finished:
-            return
-        try:
-            launch_installer(path, release)
-        except Exception:
-            self._failed("无法替换当前程序，请确认程序位于可写入的文件夹，也可以跳过更新继续使用。")
-            return
-        self.finished = True
-        self.hide()
-        self.install_started.emit()
+    def _downloaded(self, generation, path, release):
+        if self.finished or generation != self.generation: return
+        try: launch_installer(path,release)
+        except Exception as error:
+            self._failed(generation,RuntimeError('无法替换当前程序，请确认 EXE 所在目录可写后重试。')); return
+        self.finished = True; self.state = 'finished'; self.hide(); self.install_started.emit()
 
-    def _failed(self, message):
-        if self.finished:
-            return
-        self.title.setText("本次更新未完成")
-        self.message.setText(message[:300] + "\n已保留当前版本，可以跳过或重试。")
-        self.progress.hide()
-        self.update_button.setText("重试更新")
-        self.update_button.show()
+    def _failed(self, generation, error):
+        if self.finished or generation != self.generation: return
+        self.check_timer.stop()
+        offline = isinstance(error,(UpdateUnavailable,requests.ConnectionError,requests.Timeout)) and not isinstance(error,requests.exceptions.SSLError)
+        self.state = 'offline' if offline else 'error'
+        self.title.setText('无法连接更新服务' if offline else '更新未完成')
+        self.message.setText(str(error)[:250] + ('\n可以重试，或离线进入。' if offline else '\n请重试或退出程序；此情况不能跳过更新。'))
+        self.progress.hide(); self.skip_button.setVisible(offline); self.update_button.show(); self.show(); self.update_available.emit()
+
+    def _check_timeout(self):
+        if self.finished or self.state != 'checking': return
+        self.token.cancel(); self.generation += 1
+        self._failed(self.generation,UpdateUnavailable('更新服务长时间未响应。'))
+
+    def retry(self):
+        if self.finished: return
+        if self.release is not None: self.state = 'required'; self.start_download()
+        else: self.begin()
 
     def skip(self):
-        if self.finished:
-            return
-        self.finished = True
-        self.check_timer.stop()
-        self.token.cancel()
-        self.hide()
-        self.continue_startup.emit()
+        if self.finished or self.state != 'offline': return
+        self.finished = True; self.state = 'finished'; self.token.cancel(); self.hide(); self.continue_startup.emit()
 
-    def reject(self):
-        self.skip()
+    def exit(self):
+        if self.finished: return
+        self.finished = True; self.state = 'finished'; self.check_timer.stop(); self.token.cancel(); self.hide(); self.exit_requested.emit()
 
-    def closeEvent(self, event):
-        self.skip()
-        event.accept()
+    def reject(self): self.exit()
+
+    def closeEvent(self,event): self.exit(); event.accept()

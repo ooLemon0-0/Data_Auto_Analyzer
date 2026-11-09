@@ -24,7 +24,7 @@ from app.desktop.downloads import DownloadManager, task_key
 from app.desktop.cache_store import CacheStore, format_bytes
 from app.desktop.cache_cleanup import CacheMaintenance, CACHE_CHECK_INTERVAL_MS
 from app.desktop.cache_dialog import CacheDialog
-from app.desktop.image_export import save_review_image
+from app.desktop.image_export import save_original_image, downloads_directory
 from app.desktop.task_dialog import TaskBrowserDialog
 from app.desktop.tasks import CATEGORIES, TaskQuery, filter_tasks, project_category, review_summaries, task_rows
 from app.desktop.network import EasyConnectManager
@@ -166,9 +166,12 @@ class ReviewWindow(QMainWindow):
         for text, decision, glyph, color in (
             ("正确  ·  快捷键 1", "correct", "check", "#27845B"),
             ("错误  ·  快捷键 2", "incorrect", "close", "#D05C68"),
-            ("无效并补抽  ·  快捷键 3", "invalid", "skip", "#71798D")):
+            ("模糊  ·  快捷键 3", "invalid", "skip", "#71798D"),
+            ("其他  ·  快捷键 4", "other", "info", "#8D75B5")):
             action = button(text, lambda _checked=False, d=decision: self.decide(d), glyph=glyph, color=color)
             action.setProperty("decision", decision)
+            if decision in {'invalid', 'other'}:
+                action.setToolTip('独立记录，不计入正确率，并自动补抽')
             action.setMinimumHeight(48)
             decisions.addWidget(action, 1)
             self.decision_buttons.append(action)
@@ -185,7 +188,7 @@ class ReviewWindow(QMainWindow):
         footer.addWidget(self.activity)
         main.addLayout(footer)
         for key, callback in (("1", lambda: self.decide("correct")), ("2", lambda: self.decide("incorrect")),
-                              ("3", lambda: self.decide("invalid")), ("R", self.rotate),
+                              ("3", lambda: self.decide("invalid")), ("4", lambda: self.decide("other")), ("R", self.rotate),
                               ("Left", lambda: self.navigate("previous")), ("Right", lambda: self.navigate("next"))):
             shortcut = QShortcut(QKeySequence(key), self)
             shortcut.activated.connect(lambda cb=callback: self._shortcut(cb))
@@ -298,15 +301,16 @@ class ReviewWindow(QMainWindow):
         self.stats = {}
         for key, title, color in (("progress", "有效审核进度", "#403851"), ("correct", "正确", "#29946A"),
                                   ("incorrect", "错误", "#D5717B"), ("invalid", "无效 / 已补抽", "#8D94A7"),
+                                  ("other", "其他/已补抽", "#8D75B5"),
                                   ("accuracy", "识别准确率", "#6658E8")):
             card = QFrame()
             card.setObjectName("stat")
             box = QVBoxLayout(card)
-            box.setContentsMargins(16, 12, 16, 12)
+            box.setContentsMargins(12, 12, 12, 12)
             box.setSpacing(6)
             box.addWidget(label(title, muted=True))
             value = label("—" if key == "accuracy" else "0 / 50" if key == "progress" else "0")
-            value.setStyleSheet(f"font-family: 'Segoe UI'; font-size: 27px; font-weight: 600; color: {color};")
+            value.setStyleSheet(f"font-family: 'Segoe UI'; font-size: {21 if key == 'accuracy' else 27}px; font-weight: 600; color: {color};")
             self.stats[key] = value
             box.addWidget(value)
             if key == "progress":
@@ -818,7 +822,7 @@ class ReviewWindow(QMainWindow):
         self.stats["progress"].setText(f"{state['valid_count']} / {state['target_size']}")
         self.review_progress.setMaximum(state["target_size"])
         self.review_progress.setValue(state["valid_count"])
-        for key in ("correct", "incorrect", "invalid"):
+        for key in ("correct", "incorrect", "invalid", "other"):
             self.stats[key].setText(str(state[key]))
         self.stats["accuracy"].setText("—" if state["accuracy"] is None else f"{state['accuracy'] * 100:.1f}%")
         self.subtitle.setText(f"{state['business_date']}  /  {self._current_project().name}")
@@ -828,7 +832,7 @@ class ReviewWindow(QMainWindow):
             kind = {"boxed": "端面框复核图", "original": "原图 · 无端面框数据", "detail": "局部图 · 无完整原图"}.get(item["metadata"].get("review_image_kind"), "")
             self.image_hint.setText(item["metadata"].get("timestamp", "") + ("   ·   " + kind if kind else "") + "   ·   滚轮缩放 / 拖动查看")
             decision = item["decision"]
-            self.review_badge.setText({None: "待审核", "correct": "已标记正确", "incorrect": "已标记错误", "invalid": "无效 · 已补抽"}.get(decision, "待审核"))
+            self.review_badge.setText({None: "待审核", "correct": "已标记正确", "incorrect": "已标记错误", "invalid": "模糊/无效 · 已补抽", 'other': '其他 · 已补抽'}.get(decision, "待审核"))
             self.viewer.set_image(image, reset=item["item_id"] != previous.get("item_id"))
             self.image_stack.setCurrentIndex(1)
         self._refresh_enabled()
@@ -908,19 +912,29 @@ class ReviewWindow(QMainWindow):
     def save_current_image(self):
         if self.closed or not self.state or self.viewer.image is None or not self.viewer.save_button.isEnabled():
             return
-        from PySide6.QtGui import QImage
-        image = QImage(self.viewer.image)
-        rotation = self.viewer.rotation
         state, item = self.state, self.state.get('current') or {}
         project = self._current_project()
         name = project.name if project else state['project_id']
         day = state['business_date']
         source_key = item.get('source_key') or item.get('item_id') or '样本'
+        from app.desktop.widgets import SaveOriginalDialog
+        if getattr(self, 'save_confirmation', None) is not None and self.save_confirmation.isVisible():
+            self.save_confirmation.raise_()
+            return
+        self.save_confirmation = SaveOriginalDialog(self, name, day, downloads_directory())
+        self.save_confirmation.confirmed.connect(lambda: self._save_original(item['item_id'], name, day, source_key))
+        self.save_confirmation.show()
+
+    def _save_original(self, item_id, name, day, source_key):
+        if self.closed:
+            return
         self.viewer.save_button.setEnabled(False)
         self.viewer.save_button.setText('正在保存…')
         def work():
             try:
-                path = save_review_image(image, name, day, source_key, rotation=rotation)
+                with self.downloads.cache_reading([day]):
+                    original = self.service.materialize_original_image(item_id)
+                    path = save_original_image(original, name, day, source_key)
                 error = None
             except Exception as exc:
                 logger.exception('Could not export review image')
@@ -933,8 +947,8 @@ class ReviewWindow(QMainWindow):
         if self.closed:
             return
         self.viewer.save_button.setEnabled(True)
-        self.viewer.save_button.setText('保存图片')
-        self.status.setText('保存失败，请检查下载文件夹的权限和剩余空间。' if error else f'图片已保存：{path}')
+        self.viewer.save_button.setText('保存原图')
+        self.status.setText(f'原图未保存：{error[:200]}' if error else f'原图已保存：{path}')
 
     def _shortcut(self, callback):
         from PySide6.QtWidgets import QAbstractSpinBox, QLineEdit

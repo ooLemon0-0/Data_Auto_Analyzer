@@ -458,6 +458,9 @@ class QingTuiDocumentSink(DataSink):
                 f"不支持的 column 配置: {item!r}"
             )
 
+        if fmt.get('include_other') and not any(spec['field'] == 'other' for spec in specs):
+            specs.append({'field': 'other', 'header': '其他'})
+
         if not specs:
 
             raise RuntimeError(
@@ -919,6 +922,12 @@ class QingTuiDocumentSink(DataSink):
                 list[str],
             ]
         ] = []
+
+        if 'other' in fields:
+            other_index = fields.index('other')
+            for row in data_rows:
+                if not row[other_index].strip():
+                    row[other_index] = '0'
 
         replaced_count = 0
 
@@ -2550,6 +2559,7 @@ class QingTuiDocumentSink(DataSink):
                 ],
             )
         )
+        numeric_fields.add('other')
 
         for row_index, (
             expected_row,

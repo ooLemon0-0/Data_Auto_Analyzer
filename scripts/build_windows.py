@@ -105,6 +105,10 @@ collection = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name='Aut
     from scripts.windows_bundle import build_launcher
     launcher = build_launcher(ROOT / "dist/AutoAnalyzerRuntime", target, stage / "app.ico", stage=ROOT / "build/launcher")
     digest = hashlib.file_digest(target.open("rb"), "sha256").hexdigest()
+    update_manifest = {'version': VERSION, 'url': f'https://github.com/ooLemon0-0/Data_Auto_Analyzer/releases/download/v{VERSION}/AutoAnalyzer.exe',
+        'sha256': digest, 'size': target.stat().st_size,
+        'notes': '联网发现新版后自动更新；新增其他判定，保存前确认并只导出完整原始图片。'}
+    (release / 'update.json').write_text(json.dumps(update_manifest, ensure_ascii=False, indent=2), encoding='utf-8')
     (release / "SHA256SUMS.txt").write_text(f"{digest}  AutoAnalyzer.exe\n{digest}  {target.name}\n", encoding="utf-8")
     (release / "使用说明.txt").write_text(
         f"数据抽样审核 桌面版 {VERSION}（Windows 10/11 64 位）\n\n"
@@ -112,8 +116,8 @@ collection = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name='Aut
         "   先显示加载窗口；运行文件只在首次使用或升级后安装，之后从本机缓存启动。\n"
         "   组件从 EXE 本地解压，无需联网下载；重复打开同一版本会复用已解压文件。\n"
         "   加载窗口显示运行文件校验、组件安装、配置读取和本地任务恢复进度，可随时退出。\n"
-        "   启动时自动检查 GitHub Releases；连接失败直接进入工作台，也可点击“跳过更新”。\n"
-        "   发现新版可下载、校验并自动重启更新；下载时也可跳过，继续使用当前版本。\n"
+        "   启动时必须检查更新；发现新版后自动下载、校验并重启，完成前不能进入旧版。\n"
+        "   仅更新服务无法连接时提供“离线进入”；校验、权限或安装错误须重试或退出。\n"
         "   主界面“缓存空间”可按采集日期查看占用、勾选多个日期清理图片；审核记录保留。\n"
         "   正在拉取的日期需先停止任务；清理后的任务可继续拉取图片，沿用原审核结果。\n"
         "   图片缓存达到 10 GB 后，后台从最旧日期逐天清理至低于阈值；正在下载或审核的日期跳过。\n"
@@ -128,9 +132,9 @@ collection = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name='Aut
         "   可单独停止某个点位，或停止全部后台任务；停止后点“继续拉取”复用已完成图片。\n"
         "   点击主窗口关闭，在提示中选“停止并退出”即可中断并退出，不必等整批结束。\n"
         "   未完成任务会保留点位、日期和样本数；下次打开可继续。已保存审核结果不丢失。\n"
-        "5. 按 1 正确、2 错误、3 无效并自动补抽；R 旋转，滚轮缩放，拖动查看。\n"
-        "   鼠标移到图片上，右上角会显示“保存图片”；点击保存到系统“下载”文件夹。\n"
-        "   保存完整分辨率的复核图（含端面框和当前旋转方向），重名时自动另存，不覆盖。\n"
+        "5. 按 1 正确、2 错误、3 模糊、4 其他；模糊和其他单独记录，不计正确率并自动补抽。\n"
+        "   鼠标移到图片上，右上角会显示“保存原图”；确认后保存到系统“下载”文件夹。\n"
+        "   只复制现场完整原始文件，不含端面框、局部裁剪和界面旋转；原图缺失会明确提示。\n"
         "   镔鑫二期 172.30.37.* 点位优先显示带端面框的复核图。没有有效框坐标时会明确标注原图。\n"
         "   旧缓存重新拉取时会补齐坐标并生成复核图，复用已有原图、保留审核结果。\n"
         "6. 达到有效样本目标后默认自动上传轻推。同日期更新覆盖，不会重复追加。\n"

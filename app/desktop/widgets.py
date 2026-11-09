@@ -46,11 +46,11 @@ class ImageViewer(QGraphicsView):
         self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
         self.setBackgroundBrush(QColor("#181C27"))
         self._hovered = False
-        self.save_button = button('保存图片', self.save_requested.emit, glyph='download', color='#FFFFFF')
+        self.save_button = button('保存原图', self.save_requested.emit, glyph='download', color='#FFFFFF')
         self.save_button.setParent(self.viewport())
         self.save_button.setFixedSize(112, 38)
-        self.save_button.setToolTip('保存当前复核图到系统“下载”文件夹（完整分辨率）')
-        self.save_button.setAccessibleName('保存图片到下载文件夹')
+        self.save_button.setToolTip('确认后保存现场完整原图，不含端面框或局部裁剪')
+        self.save_button.setAccessibleName('保存原图到下载文件夹')
         self.save_button.setStyleSheet('QPushButton { background: #6658E8; color: white; border: 1px solid #8D82EE; '
             'border-radius: 9px; font-weight: 600; } QPushButton:hover { background: #7769F0; } '
             'QPushButton:disabled { background: #4A456D; color: #CBC6E6; }')
@@ -119,6 +119,34 @@ class ImageViewer(QGraphicsView):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._fit()
+
+
+class SaveOriginalDialog(QDialog):
+    confirmed = Signal()
+
+    def __init__(self, parent, project, day, directory):
+        super().__init__(parent)
+        self.setWindowTitle('确认保存原图')
+        self.setWindowModality(Qt.WindowModality.ApplicationModal)
+        self.setFixedWidth(520)
+        box = QVBoxLayout(self)
+        box.setContentsMargins(28, 26, 28, 24)
+        box.setSpacing(16)
+        box.addWidget(label('保存现场完整原图？', heading=True))
+        details = label(f'{project} · {day}\n\n保存未经绘框、裁剪、缩放或旋转的原始图片文件。\n找不到完整原图时会停止，不会用框图或局部图替代。\n\n保存到：{directory}')
+        details.setWordWrap(True)
+        box.addWidget(details)
+        actions = QHBoxLayout()
+        actions.addStretch()
+        self.cancel_button = button('取消', self.reject)
+        self.confirm_button = button('确认保存原图', self._confirm, variant='primary')
+        actions.addWidget(self.cancel_button)
+        actions.addWidget(self.confirm_button)
+        box.addLayout(actions)
+
+    def _confirm(self):
+        self.accept()
+        self.confirmed.emit()
 
 
 class ProgressDialog(QDialog):

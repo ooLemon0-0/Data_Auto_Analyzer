@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from contextlib import contextmanager
+from collections import Counter
 import json
 import logging
 from pathlib import Path
@@ -45,6 +46,7 @@ class DownloadManager:
         self.cleaning_dates = set()
         self.background_cleaning_dates = set()
         self.review_dates = set()
+        self.reading_dates = Counter()
         self._route_locks = {}
         self.state_path = Path(state_path) if state_path else None
 
@@ -313,6 +315,20 @@ class DownloadManager:
             return True
 
     @contextmanager
+    def cache_reading(self, days):
+        selected = set(days)
+        with self.lock:
+            if selected & self.cleaning_dates:
+                raise CacheInUse('该日期正在清理，请稍后保存原图')
+            self.reading_dates.update(selected)
+        try:
+            yield
+        finally:
+            with self.lock:
+                self.reading_dates.subtract(selected)
+                self.reading_dates += Counter()
+
+    @contextmanager
     def cache_cleanup(self, days, *, background=False):
         selected = {date.fromisoformat(day).isoformat() for day in days}
         with self.lock:
@@ -320,6 +336,8 @@ class DownloadManager:
                 raise CacheInUse("所选日期仍有拉取任务，请先停止这些任务，再清理缓存")
             if selected & self.cleaning_dates:
                 raise CacheInUse("这些日期正在清理，请稍后刷新")
+            if selected & self.reading_dates.keys():
+                raise CacheInUse('原图正在保存，请稍后再清理该日期')
             if background and selected & self.review_dates:
                 raise CacheInUse("该日期正在审核，已跳过自动清理")
             self.cleaning_dates.update(selected)

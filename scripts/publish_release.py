@@ -46,21 +46,7 @@ def main():
     if lookup.status_code == 404:
         response = session.post(api + "/releases", json={"tag_name": tag, "target_commitish": commit,
             "name": f"数据抽样审核 {tag} · Windows", "draft": True, "prerelease": False,
-            "body": "Windows 10/11 64 位便携版，下载 AutoAnalyzer.exe 即可运行。\n\n"
-                    "- 图片悬停时可一键保存到系统下载目录，保留完整分辨率、端面框及旋转方向。\n"
-                    "- 启动组件在本地解压，无需下载；区分首次准备、新版更新及组件修复，重复启动复用缓存。\n"
-                    "- 图片缓存达到 10 GB 后，后台从最旧日期逐天自动清理，保留审核和同步记录。\n"
-                    "- 自动清理跳过正在下载或审核的日期；不弹窗、不锁界面，退出无需等待。\n"
-                    "- 启动时先显示加载窗口，运行文件安装后复用，减少重复解压等待。\n"
-                    "- 加载窗口显示文件校验、组件安装、配置读取和任务恢复；支持退出和跳过更新。\n"
-                    "- 简化界面文案，审核按钮明确标注快捷键。\n"
-                    "- 新增图片缓存管理：按采集日期统计占用，可批量清理，保留审核记录。\n"
-                    "- 本地任务支持镔鑫一期 / 二期、芜湖、瑞丰等分类，以及搜索、日期 / 状态筛选和排序。\n"
-                    "- 启动时检查 GitHub 更新；网络不可用直接启动，可随时跳过检查或下载。\n"
-                    "- 更新文件校验大小和 SHA-256，自动替换并重启，保留本地数据。\n"
-                    "- 支持多点位并发拉取、清晰的分阶段进度、停止任务和中断退出后继续。\n"
-                    "- 二期点位优先生成带端面框的复核图；审核完成可同步轻推。\n\n"
-                    "便携版内置现场配置及独立浏览器运行环境，面向已授权的现场使用人员。"}, timeout=20)
+            "body": 'Windows 10/11 64 位便携版，下载 AutoAnalyzer.exe 即可运行。\n\n- 联网发现新版后自动下载、校验并重启，完成前不能进入旧版；仅更新服务无法连接时可离线进入。\n- 提供备用更新清单入口，修复更新安装脚本对 PowerShell Get-FileHash 的依赖。\n- 新增“其他”（快捷键4），单独计数，不计正确率并自动补抽；轻推统计追加其他列。\n- 保存前必须确认，只复制现场完整原始文件，不保存框图、识别裁图或界面缩放/旋转结果。\n\nv1.6.3 之前的程序需先升级一次，之后才具备新的强制更新策略。'}, timeout=20)
         response.raise_for_status()
         release = response.json()
     else:
@@ -73,7 +59,8 @@ def main():
     for local_name, asset_name, content_type in [
         ("数据抽样审核.exe", "AutoAnalyzer.exe", "application/octet-stream"),
         ("SHA256SUMS.txt", "SHA256SUMS.txt", "text/plain"),
-        ("使用说明.txt", "README-Windows.txt", "text/plain")]:
+        ("使用说明.txt", "README-Windows.txt", "text/plain"),
+        ("update.json", "update.json", "application/json")]:
         release_dir = args.release_dir or (ROOT / "release" / ("v" + VERSION))
         if args.release_dir is None and not release_dir.is_dir():
             release_dir = ROOT / "release"

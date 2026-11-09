@@ -10,6 +10,7 @@ from app.services.review_service import ReviewService
 
 def fingerprint(state: dict) -> str:
     values = [state[key] for key in ("project_id", "business_date", "target_size", "correct", "incorrect", "invalid")]
+    values.append(state.get('other', 0))
     return hashlib.sha256(json.dumps(values).encode()).hexdigest()
 
 

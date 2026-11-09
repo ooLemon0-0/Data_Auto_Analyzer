@@ -9,7 +9,7 @@ from PySide6.QtTest import QTest
 
 from app import db
 from app.core.config import settings
-from app.desktop.image_export import save_review_image
+from app.desktop.image_export import save_original_image
 from app.desktop.widgets import ImageViewer
 
 
@@ -20,31 +20,28 @@ def picture():
     return image
 
 
-def test_export_full_resolution_overlay_rotation_and_duplicate_names(tmp_path):
-    image = picture()
-    first = save_review_image(image, '../点位:*', '2026-11-09', '../../key?1', directory=tmp_path)
-    second = save_review_image(image, '../点位:*', '2026-11-09', '../../key?1', directory=tmp_path)
-    assert first.parent == second.parent == tmp_path and first != second
-    assert second.stem.endswith('(2)') and first.exists()
-    saved = QImage(str(first))
-    assert saved.size() == image.size() and saved.pixelColor(20, 40) == image.pixelColor(20, 40)
-    rotated = save_review_image(image, '点位', '2026-11-09', 'rotated', rotation=1, directory=tmp_path)
-    checked = QImage(str(rotated))
-    assert checked.width() == 360 and checked.height() == 640
-    assert checked.pixelColor(319, 20) == image.pixelColor(20, 40)
+def original(tmp_path):
+    from PIL import Image
+    path = tmp_path / 'full.jpg'
+    Image.new('RGB',(960,540),'#192A3B').save(path)
+    return path
 
 
-def test_export_uses_redirected_system_downloads_and_rejects_empty_image(tmp_path, monkeypatch):
+def test_export_original_bytes_and_duplicate_names(tmp_path):
+    source = original(tmp_path)
+    first = save_original_image(source, '../点位:*', '2026-11-09', '../../key?1', directory=tmp_path / 'downloads')
+    second = save_original_image(source, '../点位:*', '2026-11-09', '../../key?1', directory=tmp_path / 'downloads')
+    assert first.parent == second.parent == tmp_path / 'downloads' and first != second
+    assert first.suffix == '.jpg' and second.stem.endswith('(2)')
+    assert first.read_bytes() == second.read_bytes() == source.read_bytes()
+
+
+def test_export_uses_redirected_system_downloads(tmp_path, monkeypatch):
     redirected = tmp_path / 'moved downloads'
-    def location(kind):
-        assert kind == QStandardPaths.StandardLocation.DownloadLocation
-        return str(redirected)
-    monkeypatch.setattr(QStandardPaths, 'writableLocation', location)
-    saved = save_review_image(picture(), '点位', '2026-11-09', 'key')
-    assert saved.parent == redirected and saved.exists()
-    with pytest.raises(ValueError):
-        save_review_image(QImage(), 'p', '2026-11-09', 'invalid', directory=redirected)
-    assert len(list(redirected.iterdir())) == 1
+    monkeypatch.setattr(QStandardPaths, 'writableLocation', lambda _kind: str(redirected))
+    source = original(tmp_path)
+    saved = save_original_image(source,'点位','2026-11-09','key')
+    assert saved.parent == redirected and saved.read_bytes() == source.read_bytes()
 
 
 def test_hover_button_hides_without_image_remains_clickable_and_tracks_resize(qapp):
@@ -76,39 +73,42 @@ def test_hover_button_hides_without_image_remains_clickable_and_tracks_resize(qa
     viewer.close()
 
 
-def test_desktop_export_snapshot_does_not_lock_review_or_change_audits(tmp_path, monkeypatch, qapp):
+def test_desktop_confirmation_saves_raw_not_display_and_keeps_review_responsive(tmp_path,monkeypatch,qapp):
     from app.desktop.window import ReviewWindow
     from threading import Event
-    monkeypatch.setattr(db, 'DB_PATH', tmp_path / 'review.sqlite3')
-    monkeypatch.setattr(settings.storage, 'data_root', str(tmp_path / 'cache'))
-    window = ReviewWindow(check_network=False)
+    monkeypatch.setattr(db,'DB_PATH',tmp_path/'review.sqlite3')
+    monkeypatch.setattr(settings.storage,'data_root',str(tmp_path/'cache'))
+    monkeypatch.setattr(QStandardPaths,'writableLocation',lambda _kind:str(tmp_path/'Downloads'))
+    window=ReviewWindow(check_network=False)
     window.auto_upload.setChecked(False)
-    window.state = {'project_id': window.projects[0].id, 'business_date': '2026-11-09',
-        'current': {'source_key': 'RAW/001', 'item_id': 999}}
-    window.viewer.set_image(picture())
+    window.state={'project_id':window.projects[0].id,'business_date':'2026-11-09','current':{'source_key':'RAW/001','item_id':999}}
+    window.viewer.set_image(picture());window.viewer.rotate();window.viewer.change_zoom(2)
     window.show()
-    before = db.DB_PATH.read_bytes()
-    entered, release = Event(), Event()
-    def save(image, project, day, key, **kwargs):
-        entered.set()
-        assert release.wait(5)
-        return save_review_image(image, project, day, key, directory=tmp_path / 'Downloads', **kwargs)
-    monkeypatch.setattr('app.desktop.window.save_review_image', save)
+    before=db.DB_PATH.read_bytes()
+    source=original(tmp_path)
+    entered,release=Event(),Event()
+    def materialize(item_id):
+        assert item_id==999
+        entered.set();assert release.wait(5)
+        return source
+    monkeypatch.setattr(window.service,'materialize_original_image',materialize)
     try:
         window.viewer.save_requested.emit()
+        assert window.save_confirmation.isVisible() and not entered.is_set()
+        window.save_confirmation.cancel_button.click()
+        assert not entered.is_set() and not (tmp_path/'Downloads').exists()
+        window.viewer.save_requested.emit()
+        window.save_confirmation.confirm_button.click()
         assert entered.wait(3)
         assert not window.busy and window.fetch_button.isEnabled() and not window.viewer.save_button.isEnabled()
-        window.viewer.set_image(QImage(4, 4, QImage.Format.Format_RGB32))
+        window.viewer.set_image(QImage(4,4,QImage.Format.Format_RGB32))
         release.set()
-        deadline = time.monotonic() + 5
-        while not window.viewer.save_button.isEnabled() and time.monotonic() < deadline:
-            qapp.processEvents()
-            time.sleep(.01)
-        assert window.viewer.save_button.isEnabled()
-        saved = list((tmp_path / 'Downloads').glob('*.png'))
-        assert len(saved) == 1 and QImage(str(saved[0])).size() == picture().size()
+        deadline=time.monotonic()+5
+        while not window.viewer.save_button.isEnabled() and time.monotonic()<deadline:
+            qapp.processEvents();time.sleep(.01)
+        saved=list((tmp_path/'Downloads').glob('*.jpg'))
+        assert len(saved)==1 and saved[0].read_bytes()==source.read_bytes()
         assert str(saved[0]) in window.status.text() and window.notice is None
-        assert db.DB_PATH.read_bytes() == before
+        assert db.DB_PATH.read_bytes()==before
     finally:
-        release.set()
-        window.close()
+        release.set();window.close()

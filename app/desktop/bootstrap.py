@@ -11,7 +11,7 @@ import sys
 
 
 APP_NAME = "AutoAnalyzer"
-VERSION = "1.6.2"
+VERSION = "1.6.3"
 
 
 def resource_root() -> Path:
@@ -76,6 +76,7 @@ def relocate_config(config: dict, root: Path, browser: Path | None) -> dict:
         source_browser.update(user_data_dir=str(root / "browser" / project["id"]),
                               download_dir=str(root / "downloads" / project["id"]), headless=True)
         sink_browser = project.setdefault("sink", {}).setdefault("browser", {})
+        project['sink'].setdefault('format', {})['include_other'] = True
         sink_browser.update(user_data_dir=str(root / "browser/qingtui"), remote_debugging_port=19423,
                             allow_interactive_login=True, interactive_login_timeout_seconds=300)
         if browser is not None:

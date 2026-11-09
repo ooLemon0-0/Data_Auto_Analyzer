@@ -500,6 +500,20 @@ class RuifengHistorySource(DataSource):
         link = cell.locator("a[href]").first
         return (link.get_attribute("href") or "").strip() if link.count() else ""
 
+    @staticmethod
+    def _original_src(cell):
+        if cell is None:
+            return ''
+        image = cell.locator('img').first
+        if image.count():
+            for attribute in ('data-original', 'data-full', 'data-full-src'):
+                value = image.get_attribute(attribute)
+                if value:
+                    return value.strip()
+        link = cell.locator('a[href]').first
+        value = (link.get_attribute('href') or '').strip() if link.count() else ''
+        return value if Path(urlparse(value).path).suffix.lower() in {'.jpg', '.jpeg', '.png', '.bmp', '.webp'} else ''
+
     def _row_to_item(
         self,
         page,
@@ -523,6 +537,7 @@ class RuifengHistorySource(DataSource):
             for index in range(cells.count()):
                 image_src = self._image_src(cells.nth(index))
                 if image_src:
+                    image_cell = cells.nth(index)
                     break
         if not image_src:
             return None
@@ -541,6 +556,8 @@ class RuifengHistorySource(DataSource):
             image_name = Path(urlparse(image_url).path).name or "remote-image"
 
         key_material = f"{camera_group}|{timestamp}|{image_name}|{recognition}|{image_url}"
+        original_src = self._original_src(image_cell)
+        original_url = urljoin(page.url, original_src) if original_src else ''
         digest = hashlib.sha1(key_material.encode("utf-8")).hexdigest()[:16]
         prefix = re.sub(r"[^0-9A-Za-z]+", "", timestamp) or "record"
         return SourceItem(
@@ -552,6 +569,7 @@ class RuifengHistorySource(DataSource):
                 "camera_group": camera_group,
                 "recognition": recognition,
                 "image_url": image_url,
+                'original_image_url': original_url,
                 "image_name": image_name,
                 "source_page": page_no,
                 "source_row": row_no,

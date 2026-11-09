@@ -32,7 +32,9 @@ class Session:
     def __exit__(self, *_args): pass
     def get(self, url, **_kw):
         self.urls.append(url)
-        return Response(self.data[url] if isinstance(self.data, dict) else self.data)
+        value = self.data[url] if isinstance(self.data, dict) else self.data
+        if isinstance(value, Exception): raise value
+        return Response(value)
 
 
 def metadata(**overrides):
@@ -43,17 +45,20 @@ def metadata(**overrides):
 
 @pytest.mark.parametrize("info,expected", [(metadata(), "1.5.0"), (metadata(tag_name="v1.3.0"), None),
     (metadata(tag_name="v1.4.0"), None), (metadata(prerelease=True), None), (metadata(draft=True), None),
-    (metadata(tag_name="nightly"), None), (metadata(assets=[]), None)])
+    (metadata(tag_name="nightly"), "error"), (metadata(assets=[]), "error")])
 def test_check_only_offers_newer_complete_stable_releases(monkeypatch, info, expected):
     monkeypatch.setattr(updates, "http_session", lambda: Session(json.dumps(info).encode()))
-    result = updates.check_for_update(CancellationToken(), current="1.4.0")
-    assert (result.version if result else None) == expected
+    if expected == 'error':
+        with pytest.raises(updates.UpdateMetadataError): updates.check_for_update(CancellationToken(),current='1.4.0')
+    else:
+        result = updates.check_for_update(CancellationToken(), current="1.4.0")
+        assert (result.version if result else None) == expected
 
 
 def test_network_failure_is_an_optional_skipped_check(monkeypatch):
     def unavailable(): raise OSError("GitHub unavailable")
     monkeypatch.setattr(updates, "http_session", unavailable)
-    assert updates.check_for_update(CancellationToken()) is None
+    with pytest.raises(updates.UpdateUnavailable): updates.check_for_update(CancellationToken())
 
 
 def test_missing_api_digest_uses_release_checksum_and_rejects_external_urls(monkeypatch):
@@ -125,57 +130,70 @@ def test_cached_runtime_updates_the_original_launcher_not_internal_core(tmp_path
     assert calls[0][calls[0].index("-TargetPath") + 1] == str(launcher.resolve())
 
 
-def test_update_dialog_skip_ignores_late_result_and_can_cancel_download(monkeypatch, tmp_path, qapp):
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PySide6.QtWidgets import QApplication
-    from app.desktop.update_dialog import UpdateDialog
-    from app.desktop.theme import apply_theme
-    app = qapp
-    dialog = UpdateDialog()
-    continued = []
-    dialog.continue_startup.connect(lambda: continued.append(True))
-    dialog.show()
-    dialog.skip_button.click()
-    dialog._checked(updates.Release("1.5.0", URL, DIGEST, len(PAYLOAD)))
-    assert continued == [True] and dialog.token.cancelled and not dialog.isVisible()
-    dialog.skip()
-    assert continued == [True]
-    another = UpdateDialog()
-    another._checked(updates.Release("1.5.0", URL, DIGEST, len(PAYLOAD)))
-    another.show()
-    app.processEvents()
-    assert another.update_button.isVisible()
-    another.reject()
-    assert another.finished and another.token.cancelled
-
-
-def test_update_ui_deadline_skips_even_when_transport_never_returns(monkeypatch, qapp):
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+def test_required_update_cannot_skip_or_close_into_old_version(monkeypatch,qapp):
     import time
-    from threading import Event, current_thread
-    from PySide6.QtWidgets import QApplication
+    from threading import Event,current_thread
     from app.desktop.update_dialog import UpdateDialog
-    app = qapp
-    blocked, entered = Event(), Event()
-    workers = []
-    def stuck(_token):
-        workers.append(current_thread())
-        entered.set()
-        blocked.wait(10)
-    monkeypatch.setattr("app.desktop.update_dialog.check_for_update", stuck)
-    dialog = UpdateDialog()
-    continued = []
-    dialog.continue_startup.connect(lambda: continued.append(True))
+    entered,release=Event(),Event();workers=[]
+    def download(*_args):
+        workers.append(current_thread());entered.set();release.wait(5)
+        raise RuntimeError('fixture exit')
+    monkeypatch.setattr('app.desktop.update_dialog.download_update',download)
+    dialog=UpdateDialog();continued=[];exited=[]
+    dialog.continue_startup.connect(lambda:continued.append(True))
+    dialog.exit_requested.connect(lambda:exited.append(True))
+    dialog._checked(0,updates.Release('9.0.0',URL,DIGEST,len(PAYLOAD)))
     try:
-        dialog.begin()
-        dialog.check_timer.start(50)
-        deadline = time.monotonic() + 2
-        while not continued and time.monotonic() < deadline:
-            app.processEvents()
-            time.sleep(.005)
-        assert entered.is_set() and continued == [True] and dialog.token.cancelled
+        qapp.processEvents();assert entered.wait(2)
+        assert dialog.state=='downloading' and not dialog.skip_button.isVisible()
+        dialog.skip();assert not dialog.finished and not continued
+        dialog.reject();assert dialog.finished and exited==[True] and not continued
     finally:
-        blocked.set()
-        for worker in workers:
-            worker.join(2)
-            assert not worker.is_alive()
+        release.set()
+        for worker in workers:worker.join(2)
+
+
+def test_only_offline_error_enables_skip_and_late_results_are_ignored(monkeypatch,qapp):
+    from app.desktop.update_dialog import UpdateDialog
+    dialog=UpdateDialog();continued=[]
+    dialog.continue_startup.connect(lambda:continued.append(True))
+    dialog.show();dialog.skip();assert not continued
+    dialog._checked(0,None,updates.UpdateUnavailable('offline'))
+    assert dialog.state=='offline' and dialog.skip_button.isVisible()
+    dialog.skip();assert continued==[True] and dialog.finished
+    dialog._checked(0,updates.Release('9.0.0',URL,DIGEST,len(PAYLOAD)))
+    assert continued==[True] and not dialog.isVisible()
+    another=UpdateDialog();another.show()
+    another._failed(0,ValueError('checksum mismatch'))
+    another.skip();assert another.state=='error' and not another.finished and not another.skip_button.isVisible()
+    another.exit()
+
+
+def test_check_deadline_offers_offline_only_after_no_response(monkeypatch,qapp):
+    import time
+    from threading import Event,current_thread
+    from app.desktop.update_dialog import UpdateDialog
+    entered,release=Event(),Event();workers=[]
+    def stuck(_token):workers.append(current_thread());entered.set();release.wait(5)
+    monkeypatch.setattr('app.desktop.update_dialog.check_for_update',stuck)
+    dialog=UpdateDialog();continued=[]
+    dialog.continue_startup.connect(lambda:continued.append(True))
+    try:
+        dialog.begin();dialog.check_timer.start(50)
+        deadline=time.monotonic()+2
+        while dialog.state!='offline' and time.monotonic()<deadline:qapp.processEvents();time.sleep(.005)
+        assert entered.is_set() and dialog.state=='offline' and not continued
+        dialog.skip();assert continued==[True]
+    finally:
+        release.set()
+        for worker in workers:worker.join(2)
+
+
+def test_api_failure_uses_public_manifest_and_online_invalid_data_never_means_offline(monkeypatch):
+    import requests
+    manifest={'version':'1.5.0','url':URL,'sha256':DIGEST,'size':len(PAYLOAD)}
+    session=Session({updates.LATEST_URL:requests.HTTPError('API rate limit'),updates.LATEST_MANIFEST_URL:json.dumps(manifest).encode()})
+    monkeypatch.setattr(updates,'http_session',lambda:session)
+    assert updates.check_for_update(CancellationToken(),current='1.4.0').version=='1.5.0'
+    session.data[updates.LATEST_MANIFEST_URL]=b'not json'
+    with pytest.raises(updates.UpdateMetadataError):updates.check_for_update(CancellationToken(),current='1.4.0')

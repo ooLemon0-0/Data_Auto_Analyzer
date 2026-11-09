@@ -21,8 +21,9 @@ def main() -> int:
     parser.add_argument("--ui-smoke-test", type=Path, metavar="REPORT_JSON", help=argparse.SUPPRESS)
     parser.add_argument("--exit-smoke-test", type=Path, metavar="REPORT_JSON", help=argparse.SUPPRESS)
     parser.add_argument("--update-smoke-test", type=Path, metavar="REPORT_JSON", help=argparse.SUPPRESS)
+    parser.add_argument("--required-update-smoke-test", type=Path, metavar="REPORT_JSON", help=argparse.SUPPRESS)
     args = parser.parse_args()
-    test_report = args.self_test or args.ui_smoke_test or args.exit_smoke_test or args.update_smoke_test
+    test_report = args.self_test or args.ui_smoke_test or args.exit_smoke_test or args.update_smoke_test or args.required_update_smoke_test
     if test_report:
         os.environ["AUTOANALYZER_DATA_DIR"] = str(test_report.resolve().parent / ("." + test_report.stem + "-data"))
     initialize()
@@ -184,27 +185,53 @@ def main() -> int:
         splash.show()
         splash.set_stage("加载审核组件")
         QTimer.singleShot(50, lambda: Thread(target=prepare, daemon=True).start())
-    if (getattr(sys, "frozen", False) and not test_report) or args.update_smoke_test:
+    if (getattr(sys, "frozen", False) and not test_report) or args.update_smoke_test or args.required_update_smoke_test:
         from app.desktop.update_dialog import UpdateDialog
         if args.update_smoke_test:
             from app.desktop.updates import ASSET_NAME, REPOSITORY, Release
             from app.desktop.bootstrap import VERSION
             import app.desktop.update_dialog as update_module
-            update_module.check_for_update = lambda _token: Release("9.0.0",
-                f"https://github.com/{REPOSITORY}/releases/download/v9.0.0/{ASSET_NAME}", "0" * 64,
-                250_000_000, "更新检查验证：可跳过、保留当前版本并进入工作台。")
+            def unavailable(_token):
+                from app.desktop.updates import UpdateUnavailable
+                raise UpdateUnavailable('离线检查验证：更新服务无法连接。')
+            update_module.check_for_update = unavailable
+        if args.required_update_smoke_test:
+            from app.desktop.updates import Release, REPOSITORY
+            import app.desktop.update_dialog as update_module
+            release_download = Event()
+            update_module.check_for_update = lambda _t: Release('9.0.0', f'https://github.com/{REPOSITORY}/releases/download/v9.0.0/AutoAnalyzer.exe', '0'*64, 100)
+            def required_download(*_args):
+                if not release_download.wait(10): raise RuntimeError('Update gate test did not reach capture')
+                return args.required_update_smoke_test.parent / 'fixture-update.exe'
+            update_module.download_update = required_download
+            def installed(*_args):
+                result = {'ok': not hasattr(app,'window') and getattr(app,'required_skip_blocked',False),
+                    'frozen':bool(getattr(sys,'frozen',False)), 'mandatory':True, 'installer_called':True,
+                    'workbench_created':hasattr(app,'window')}
+                args.required_update_smoke_test.write_text(json.dumps(result,indent=2),encoding='utf-8')
+            update_module.launch_installer = installed
         app.update_dialog = UpdateDialog()
         splash.set_stage("检查更新")
-        splash.skip_button.show()
-        splash.skip_update.connect(app.update_dialog.skip)
+        splash.skip_button.hide()
         app.update_dialog.update_available.connect(splash.hide)
         app.update_dialog.continue_startup.connect(begin_startup)
         app.update_dialog.install_started.connect(app.quit)
+        app.update_dialog.exit_requested.connect(cancel_startup)
         app.update_dialog.begin(show=False)
+        if args.required_update_smoke_test:
+            args.required_update_smoke_test.parent.mkdir(parents=True,exist_ok=True)
+            def capture_required():
+                if app.update_dialog.state != 'downloading':
+                    QTimer.singleShot(50,capture_required); return
+                app.update_dialog.skip()
+                app.required_skip_blocked = not app.update_dialog.finished and not app.update_dialog.skip_button.isVisible()
+                app.update_dialog.grab().save(str(args.required_update_smoke_test.with_suffix('.dialog.png')))
+                release_download.set()
+            QTimer.singleShot(100,capture_required)
         if args.update_smoke_test:
             args.update_smoke_test.parent.mkdir(parents=True, exist_ok=True)
             def capture_update():
-                if app.update_dialog.release is None:
+                if app.update_dialog.state != 'offline':
                     QTimer.singleShot(50, capture_update)
                     return
                 app.update_dialog.grab().save(str(args.update_smoke_test.with_suffix(".dialog.png")))

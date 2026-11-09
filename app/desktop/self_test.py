@@ -62,11 +62,10 @@ def run_self_test(output: Path) -> int:
         viewer.rotate()
         viewer.change_zoom(1.2)
         assert viewer.rotation == 1 and viewer.zoom == 1.2
-        from app.desktop.image_export import save_review_image
+        from app.desktop.image_export import save_original_image
         from PySide6.QtCore import QCoreApplication, QEvent
-        exported = save_review_image(QImage(str(rendered)), '本地自检', '2026-11-09', 'overlay',
-            rotation=1, directory=test_dir / 'Downloads')
-        assert QImage(str(exported)).width() == 80 and QImage(str(exported)).height() == 120
+        exported = save_original_image(sample, '本地自检', '2026-11-09', 'original', directory=test_dir / 'Downloads')
+        assert exported.read_bytes() == sample.read_bytes()
         viewer.show()
         app.processEvents()
         QCoreApplication.sendEvent(viewer.viewport(), QEvent(QEvent.Type.Enter))
