@@ -176,7 +176,7 @@ class ProgressDialog(QDialog):
     """Application-modal job progress, fed by real transport/cache events."""
     exit_requested = Signal()
 
-    def __init__(self, parent=None, *, title="正在准备审核图片", detail="", fetching=True, stop_only=False):
+    def __init__(self, parent=None, *, title="正在准备审核图片", detail="", fetching=True):
         super().__init__(parent)
         self.active = True
         self.fetching = fetching
@@ -222,13 +222,13 @@ class ProgressDialog(QDialog):
         timing.addStretch()
         timing.addWidget(self.elapsed)
         layout.addLayout(timing)
-        warning = "已下载原图会保留。" if stop_only else (
-            "已保存结果会保留，可以停止当前操作并退出。" if fetching else "如出现验证窗口，请完成扫码；也可以停止当前操作并退出。")
+        warning = ("已保存结果会保留，可以停止当前操作并退出。" if fetching
+                   else "如出现验证窗口，请完成扫码；也可以停止当前操作并退出。")
         self.warning = label(warning)
         self.warning.setWordWrap(True)
         self.warning.setStyleSheet("color: #7D709E; background: #EFECFC; border-radius: 9px; padding: 12px; font-size: 12px;")
         layout.addWidget(self.warning)
-        self.stop_button = button("停止采集" if stop_only else "停止当前操作并退出", self.exit_requested.emit)
+        self.stop_button = button("停止当前操作并退出", self.exit_requested.emit)
         layout.addWidget(self.stop_button)
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._tick)
@@ -278,7 +278,7 @@ class ProgressDialog(QDialog):
 class ExitDialog(QDialog):
     confirmed = Signal()
 
-    def __init__(self, parent, active_count=0):
+    def __init__(self, parent, active_count=0, *, collecting=False):
         super().__init__(parent)
         self.setWindowTitle("停止并退出")
         self.setWindowModality(Qt.WindowModality.ApplicationModal)
@@ -287,7 +287,11 @@ class ExitDialog(QDialog):
         layout.setContentsMargins(28, 26, 28, 24)
         layout.setSpacing(17)
         layout.addWidget(label("停止任务并退出？", heading=True))
-        text = (f"还有 {active_count} 个拉取任务未结束。" if active_count else "当前操作尚未完成。")
+        text = f"还有 {active_count} 个拉取任务未结束。" if active_count else ""
+        if collecting:
+            text += "数据采集尚未结束。"
+        if not text:
+            text = "当前操作尚未完成。"
         text += "退出会中断未完成的请求。已保存的审核结果和已完成图片会保留，下次可以继续。"
         body = label(text)
         body.setWordWrap(True)

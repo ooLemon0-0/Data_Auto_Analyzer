@@ -55,6 +55,123 @@ def test_collection_calendar_displays_and_selects_dates(app, tmp_path):
     assert submitted == [("vietnam", date(2026, 11, 10), date(2026, 11, 11), 100, tmp_path)]
 
 
+def test_collection_runs_without_blocking_review_or_opening_completion_popup(app, tmp_path, monkeypatch):
+    from datetime import date
+    from threading import Event
+    from PIL import Image
+    from app.core.models import SourceItem
+    from app.core.progress import report_progress
+    from app.desktop import window as workspace
+
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "review.sqlite3")
+    monkeypatch.setattr(workspace, "downloads_directory", lambda: tmp_path)
+    release = Event()
+    saved_folder = tmp_path / "collected"
+    saved_folder.mkdir()
+
+    def collect(*_args):
+        report_progress("images", "已保存 1 / 2 张原图", 1, 2)
+        assert release.wait(8)
+        return {"directory": saved_folder, "saved": 2, "requested": 2, "available": 2, "failed": 0, "reason": ""}
+
+    monkeypatch.setattr(workspace, "collect_originals", collect)
+    window = workspace.ReviewWindow(defer_restore=True)
+    monkeypatch.setattr(window.downloads, "ensure_route", lambda _project: None)
+    project = window.projects[0]
+    monkeypatch.setattr(window.service, "project_dict", lambda pid: {"id": pid, "daily_target": 3,
+        "source": {}, "sink": {"enabled": False}})
+    image = tmp_path / "sample.jpg"
+    Image.new("RGB", (120, 80), "#445566").save(image)
+    day = date(2026, 11, 24)
+    db.upsert_items(project.id, str(day), [SourceItem(source_key=str(i), image_path=image, recognition_text=str(i))
+                                          for i in range(3)])
+    window._apply_state(window._state_with_image(window.service.prepare(project.id, day, 3)))
+    window.show()
+
+    def wait(predicate):
+        deadline = time.monotonic() + 5
+        while not predicate() and time.monotonic() < deadline:
+            QTest.qWait(10)
+        assert predicate()
+
+    try:
+        QTest.mouseClick(window.collection_button, Qt.MouseButton.LeftButton)
+        window.collection_dialog.quantity.setValue(2)
+        QTest.mouseClick(window.collection_dialog.start_button, Qt.MouseButton.LeftButton)
+        progress = window.collection_progress_dialog
+        wait(lambda: progress.progress.value() == 1)
+        assert not window.busy and window.foreground_token is None and not progress.isVisible()
+        assert window.collection_button.cursor().shape() == Qt.CursorShape.ForbiddenCursor
+        QTest.mouseClick(window.collection_status_button, Qt.MouseButton.LeftButton)
+        assert progress.isVisible() and not progress.isModal() and app.activeModalWidget() is None
+        assert window.next_button.isEnabled()
+        QTest.mouseClick(window.next_button, Qt.MouseButton.LeftButton)
+        wait(lambda: not window.busy and window.state["current_index"] == 1)
+        QTest.mouseClick(window.decision_buttons[0], Qt.MouseButton.LeftButton)
+        wait(lambda: not window.busy and window.service.state(project.id, day)["correct"] == 1)
+        assert progress.progress.value() == 1 and window.collection_token is not None
+        QTest.keyClick(progress, Qt.Key.Key_Escape)
+        assert not progress.isVisible() and window.collection_token is not None
+        release.set()
+        wait(lambda: window.collection_token is None)
+        assert not progress.isVisible() and app.activeModalWidget() is None
+        assert window.collection_button.isEnabled() and window.collection_status_button.text() == "采集结果"
+        QTest.mouseClick(window.collection_status_button, Qt.MouseButton.LeftButton)
+        assert progress.open_folder.isVisible() and progress.directory == saved_folder
+    finally:
+        release.set()
+        wait(lambda: window.collection_token is None)
+        window.close()
+
+
+@pytest.mark.parametrize("exit_app", [False, True])
+def test_collection_can_be_cancelled_from_progress_or_application_exit(app, tmp_path, monkeypatch, exit_app):
+    from datetime import date
+    from threading import Event
+    from app.core.cancellation import cancel_pause
+    from app.desktop import window as workspace
+
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "review.sqlite3")
+    started, stopped = Event(), Event()
+
+    def collect(*_args):
+        started.set()
+        try:
+            cancel_pause(8)
+        finally:
+            stopped.set()
+
+    monkeypatch.setattr(workspace, "collect_originals", collect)
+    window = workspace.ReviewWindow(defer_restore=True)
+    monkeypatch.setattr(window.downloads, "ensure_route", lambda _project: None)
+    day = date(2026, 11, 24)
+    window.show()
+    window._start_collection(window.projects[0].id, day, day, 1, tmp_path)
+    assert started.wait(3)
+    token = window.collection_token
+    try:
+        if exit_app:
+            window.close()
+            assert window.isVisible() and window.exit_dialog.isVisible() and not token.cancelled
+            QTest.mouseClick(window.exit_dialog.exit_button, Qt.MouseButton.LeftButton)
+            assert window.closed and not window.collection_progress_dialog.isVisible()
+        else:
+            QTest.mouseClick(window.collection_status_button, Qt.MouseButton.LeftButton)
+            QTest.mouseClick(window.collection_progress_dialog.stop_button, Qt.MouseButton.LeftButton)
+            assert window.isVisible() and not window.busy
+        assert stopped.wait(3) and token.cancelled
+        if not exit_app:
+            deadline = time.monotonic() + 3
+            while window.collection_token is not None and time.monotonic() < deadline:
+                QTest.qWait(10)
+            assert window.collection_token is None
+            assert window.collection_progress_dialog.heading.text() == "采集已停止"
+    finally:
+        token.cancel()
+        window._shutdown()
+        window.close()
+
+
 @pytest.mark.parametrize("defer_restore", [True, False])
 def test_easyconnect_is_not_checked_until_the_network_button_is_clicked(app, tmp_path, monkeypatch, defer_restore):
     from app.desktop.window import ReviewWindow

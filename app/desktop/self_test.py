@@ -186,6 +186,36 @@ def run_self_test(output: Path) -> int:
             report["checks"]["progress_hide_and_reopen"] = True
             window.grab().save(str(test_dir / "batch_workspace.png"))
             from app.core.cancellation import cancel_pause
+            from app.desktop import window as workspace
+            collection_started = Event()
+            original_collect = workspace.collect_originals
+
+            def local_collect(*_args):
+                collection_started.set()
+                cancel_pause(30)
+
+            workspace.collect_originals = local_collect
+            try:
+                window._start_collection(first.id, day, day, 2, test_dir / "Downloads")
+                pump_until(collection_started.is_set)
+                assert not window.busy and not window.collection_progress_dialog.isVisible()
+                window.show_collection_progress()
+                assert not window.collection_progress_dialog.isModal()
+                window.collection_progress_dialog.close()
+                assert window.collection_token is not None
+                window.navigate("next")
+                pump_until(lambda: not window.busy)
+                assert window.state["current_index"] == 1
+                window._stop_collection()
+                pump_until(lambda: window.collection_token is None)
+                assert window.collection_progress_dialog.heading.text() == "采集已停止"
+                report["checks"]["background_collection_preserves_review"] = True
+            finally:
+                if window.collection_token is not None:
+                    window._stop_collection()
+                    pump_until(lambda: window.collection_token is None)
+                workspace.collect_originals = original_collect
+
             started = Event()
             def cancellable_prepare(*_a):
                 started.set()

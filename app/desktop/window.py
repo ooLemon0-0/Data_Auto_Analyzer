@@ -26,7 +26,7 @@ from app.desktop.cache_store import CacheStore, format_bytes
 from app.desktop.cache_cleanup import CacheMaintenance, CACHE_CHECK_INTERVAL_MS
 from app.desktop.cache_dialog import CacheDialog
 from app.desktop.collection import collect_originals
-from app.desktop.collection_dialog import CollectionDialog
+from app.desktop.collection_dialog import CollectionDialog, CollectionProgressDialog
 from app.desktop.image_export import save_original_image, downloads_directory
 from app.desktop.task_dialog import TaskBrowserDialog
 from app.desktop.tasks import CATEGORIES, TaskQuery, filter_tasks, project_category, review_summaries, task_rows
@@ -48,6 +48,8 @@ class JobSignals(QObject):
     network_finished = Signal(object)
     cache_cleaned = Signal(object)
     image_saved = Signal(object, object)
+    collection_progress = Signal(object, object)
+    collection_finished = Signal(object, object, object)
 
 
 class ReviewWindow(QMainWindow):
@@ -68,10 +70,10 @@ class ReviewWindow(QMainWindow):
         self.reported_completions = {}
         self.selection_dialog = None
         self.collection_dialog = None
+        self.collection_progress_dialog, self.collection_token = None, None
         self.restoring = True
         self.network_checking = False
         self.foreground_token, self.exit_dialog = None, None
-        self._active_collection = False
         self.network_token = CancellationToken()
         self.busy, self.closed = False, False
         self.progress_dialog = None
@@ -94,6 +96,8 @@ class ReviewWindow(QMainWindow):
         self.signals.network_finished.connect(self._network_checked)
         self.signals.cache_cleaned.connect(self._background_cache_cleaned)
         self.signals.image_saved.connect(self._image_saved)
+        self.signals.collection_progress.connect(self._collection_progress)
+        self.signals.collection_finished.connect(self._collection_finished)
         self._build()
         self.download_dialog = DownloadProgressDialog(self)
         self.download_dialog.open_review.connect(self._open_task)
@@ -238,8 +242,12 @@ class ReviewWindow(QMainWindow):
         self.controls.append(self.fetch_button)
         box.addWidget(self.fetch_button)
         self.collection_button = button("数据采集", self.open_collection, glyph="download")
-        self.controls.append(self.collection_button)
-        box.addWidget(self.collection_button)
+        self.collection_status_button = button("采集进度", self.show_collection_progress)
+        self.collection_status_button.hide()
+        collection_actions = QHBoxLayout()
+        collection_actions.addWidget(self.collection_button, 1)
+        collection_actions.addWidget(self.collection_status_button)
+        box.addLayout(collection_actions)
         task_heading = QHBoxLayout()
         task_heading.addWidget(label("本地审核任务", section=True), 1)
         task_heading.addWidget(button("筛选 / 排序", self.show_task_browser, variant="ghost"))
@@ -440,6 +448,11 @@ class ReviewWindow(QMainWindow):
     def _refresh_enabled(self):
         for control in self.controls:
             control.setEnabled(not self.busy)
+        collecting = self.collection_token is not None
+        self.collection_button.setEnabled(not self.busy and not collecting)
+        self.collection_button.setToolTip("当前采集结束后可以再开始一项" if collecting else "")
+        self.collection_button.setCursor(Qt.CursorShape.PointingHandCursor if self.collection_button.isEnabled()
+                                         else Qt.CursorShape.ForbiddenCursor)
         can_review = self.state is not None and not self.busy
         for control in self.decision_buttons:
             control.setEnabled(can_review)
@@ -451,26 +464,18 @@ class ReviewWindow(QMainWindow):
         self.vpn_button.setText(network_button_label(self._current_project()) or "检查 / 启动 EasyConnect")
         self.vpn_button.setEnabled(not self.busy and not self.network_checking)
 
-    def _run(self, work, callback, message, *, modal=None, retry=None, stop_only=False):
+    def _run(self, work, callback, message, *, modal=None, retry=None):
         if self.busy or self.closed:
             return
         self.busy = True
-        self._active_collection = stop_only
         token = self.foreground_token = CancellationToken()
         self.status.setText(message)
         self.activity.show()
         self._refresh_enabled()
         if modal:
             self.progress_dialog = ProgressDialog(self, title=modal, detail=message,
-                fetching=stop_only or modal == "正在准备审核图片", stop_only=stop_only)
-            if stop_only:
-                def stop():
-                    token.cancel()
-                    self.progress_dialog.stop_button.setEnabled(False)
-                    self.progress_dialog.stop_button.setText("正在停止…")
-                self.progress_dialog.exit_requested.connect(stop)
-            else:
-                self.progress_dialog.exit_requested.connect(self.request_exit)
+                fetching=modal == "正在准备审核图片")
+            self.progress_dialog.exit_requested.connect(self.request_exit)
             self.progress_dialog.show()
 
         def worker():
@@ -496,7 +501,6 @@ class ReviewWindow(QMainWindow):
         if self.closed:
             return
         cancelled = self.foreground_token is not None and self.foreground_token.cancelled
-        collecting, self._active_collection = self._active_collection, False
         self.foreground_token = None
         self.busy = False
         self.activity.hide()
@@ -518,12 +522,8 @@ class ReviewWindow(QMainWindow):
                 self.active_key = task_key(self.state["project_id"], self.state["business_date"])
                 if self.active_key in self.job_items:
                     self.task_list.setCurrentItem(self.job_items[self.active_key][0])
-            if collecting:
-                self.status.setText("采集未完成 · 已下载原图保留")
-                self._notice("数据采集未完成", detail)
-            else:
-                self.status.setText("操作未完成 · 已完成的审核结果仍保存在本机。")
-                self._notice("操作失败", self._friendly_error(detail), detail=detail, retry=retry)
+            self.status.setText("操作未完成 · 已完成的审核结果仍保存在本机。")
+            self._notice("操作失败", self._friendly_error(detail), detail=detail, retry=retry)
             return
         try:
             callback(result)
@@ -629,7 +629,7 @@ class ReviewWindow(QMainWindow):
         self.selection_dialog.show()
 
     def open_collection(self):
-        if self.busy or self.closed:
+        if self.busy or self.closed or self.collection_token is not None:
             return
         self.collection_dialog = CollectionDialog(self, self.projects, self._current_project(), downloads_directory())
         self.collection_dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
@@ -637,16 +637,72 @@ class ReviewWindow(QMainWindow):
         self.collection_dialog.show()
 
     def _start_collection(self, project_id, start, end, quantity, directory):
+        if self.closed or self.collection_token is not None:
+            return
         project = self.project_by_id[project_id]
+        if self.collection_progress_dialog is not None:
+            self.collection_progress_dialog.hide()
+            self.collection_progress_dialog.deleteLater()
+        self.collection_progress_dialog = CollectionProgressDialog(
+            self, f"{project.name} · {start} 至 {end} · 目标 {quantity:,} 张")
+        self.collection_progress_dialog.stop_requested.connect(self._stop_collection)
+        token = self.collection_token = CancellationToken()
+        self.collection_status_button.setText("采集进度")
+        self.collection_status_button.setToolTip("查看后台采集进度")
+        self.collection_status_button.show()
+        self._refresh_enabled()
 
-        def collect():
-            self.downloads.ensure_route(project)
-            return collect_originals(project.model_dump(), start, end, quantity, directory)
+        def progress(event):
+            if not self.closed:
+                self.signals.collection_progress.emit(token, event)
 
-        self._run(collect, self._collection_finished, f"{project.name} · {start} 至 {end} · 目标 {quantity:,} 张",
-                  modal="正在采集原图", stop_only=True)
+        def worker():
+            result = error = None
+            try:
+                with progress_scope(progress, cancellation_token=token):
+                    token.check()
+                    self.downloads.ensure_route(project)
+                    result = collect_originals(project.model_dump(), start, end, quantity, directory)
+            except WorkCancelled:
+                pass
+            except Exception as exc:
+                if not token.cancelled:
+                    logger.exception("Original image collection failed")
+                    error = str(exc) or type(exc).__name__
+            if not self.closed:
+                self.signals.collection_finished.emit(token, result, error)
 
-    def _collection_finished(self, result):
+        Thread(target=worker, name="data-collection", daemon=True).start()
+
+    def show_collection_progress(self):
+        dialog = self.collection_progress_dialog
+        if dialog is not None and not self.closed:
+            dialog.show()
+            dialog.raise_()
+            dialog.activateWindow()
+
+    def _collection_progress(self, token, event):
+        if not self.closed and token is self.collection_token and not token.cancelled:
+            self.collection_progress_dialog.update_progress(event)
+
+    def _stop_collection(self):
+        if self.collection_token is not None and not self.collection_token.cancelled:
+            self.collection_token.cancel()
+            self.collection_progress_dialog.stopping()
+
+    def _collection_finished(self, token, result, error):
+        if self.closed or token is not self.collection_token:
+            return
+        self.collection_token = None
+        dialog = self.collection_progress_dialog
+        self.collection_status_button.setText("采集结果")
+        self._refresh_enabled()
+        if result is None:
+            title = "采集未完成" if error else "采集已停止"
+            message = f"{error}\n\n已下载的原图会保留。" if error else "已下载的原图会保留。"
+            dialog.finish(title, message)
+            self.collection_status_button.setToolTip(title)
+            return
         saved, requested = result["saved"], result["requested"]
         folder = result["directory"]
         message = f"已保存 {saved:,} / {requested:,} 张原图。"
@@ -656,11 +712,9 @@ class ReviewWindow(QMainWindow):
             message += f"\n{result['failed']:,} 张原图下载或校验失败。"
         if result["reason"]:
             message += f"\n{result['reason']}"
-        self.status.setText(f"采集结束 · 已保存 {saved:,} 张原图")
-        self._notice("数据采集结果", message + (f"\n\n保存位置\n{folder}" if folder else ""))
-        if folder:
-            open_folder = button("打开保存位置", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder))))
-            self.notice.layout().addWidget(open_folder)
+        title = "采集完成" if saved == requested else "采集结果"
+        dialog.finish(title, message + (f"\n\n保存位置\n{folder}" if folder else ""), folder)
+        self.collection_status_button.setToolTip(f"已保存 {saved:,} / {requested:,} 张原图")
 
     def start_downloads(self, project_ids, day, target):
         if self.busy:
@@ -1098,7 +1152,7 @@ class ReviewWindow(QMainWindow):
         if self.closed:
             event.accept()
             return
-        if self.busy or self.downloads.has_active():
+        if self.busy or self.downloads.has_active() or self.collection_token is not None:
             event.ignore()
             self.request_exit()
             return
@@ -1110,7 +1164,7 @@ class ReviewWindow(QMainWindow):
             self.exit_dialog.raise_()
             return
         count = sum(j["status"] in {"queued", "running", "stopping"} for j in self.downloads.snapshots())
-        self.exit_dialog = ExitDialog(self, count)
+        self.exit_dialog = ExitDialog(self, count, collecting=self.collection_token is not None)
         self.exit_dialog.confirmed.connect(self._confirm_exit)
         self.exit_dialog.show()
 
@@ -1124,6 +1178,8 @@ class ReviewWindow(QMainWindow):
         self.closed = True
         if self.foreground_token is not None:
             self.foreground_token.cancel()
+        if self.collection_token is not None:
+            self.collection_token.cancel()
         self.network_token.cancel()
         self.sync_timer.stop()
         self.cache_timer.stop()

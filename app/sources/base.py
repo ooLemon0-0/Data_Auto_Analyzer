@@ -3,8 +3,21 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from datetime import date
 from pathlib import Path
+from threading import Lock
 
+from app.core.cancellation import cancellable_lock
 from app.core.models import SourceItem
+
+
+_browser_profiles = {}
+_browser_profiles_guard = Lock()
+
+
+def lock_browser_profile(profile: Path):
+    """Serialize Chromium contexts using the same login profile."""
+    with _browser_profiles_guard:
+        lock = _browser_profiles.setdefault(profile, Lock())
+    return cancellable_lock(lock)
 
 
 class NetworkUnavailable(RuntimeError):

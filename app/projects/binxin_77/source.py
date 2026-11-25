@@ -16,7 +16,7 @@ from playwright.sync_api import sync_playwright
 
 from app.core.config import settings
 from app.core.models import SourceItem
-from app.sources.base import DataSource, NoSourceRecords
+from app.sources.base import DataSource, NoSourceRecords, lock_browser_profile
 
 
 class Binxin77HistorySource(DataSource):
@@ -184,9 +184,12 @@ class Binxin77HistorySource(DataSource):
     # ------------------------------------------------------------------
     # Browser helpers
     # ------------------------------------------------------------------
+    def _browser_profile(self):
+        return Path(self.source.get("browser", {}).get("user_data_dir", "./runtime/browser/binxin")).resolve()
+
     def _launch_context(self, playwright):
         browser_cfg = self.source.get("browser", {})
-        user_data_dir = Path(browser_cfg.get("user_data_dir", "./runtime/browser/binxin")).resolve()
+        user_data_dir = self._browser_profile()
         user_data_dir.mkdir(parents=True, exist_ok=True)
 
         kwargs = {
@@ -713,7 +716,7 @@ class Binxin77HistorySource(DataSource):
 
     def fetch_day(self, business_date: date) -> list[SourceItem]:
         self._ensure_easyconnect()
-        with sync_playwright() as p:
+        with lock_browser_profile(self._browser_profile()), sync_playwright() as p:
             context = self._launch_context(p)
             try:
                 page = context.pages[0] if context.pages else context.new_page()
@@ -886,7 +889,7 @@ class Binxin77HistorySource(DataSource):
         # --------------------------------------------------------------
         # 2. Browser fallback
         # --------------------------------------------------------------
-        with sync_playwright() as p:
+        with lock_browser_profile(self._browser_profile()), sync_playwright() as p:
             context = self._launch_context(p)
             try:
                 page = context.pages[0] if context.pages else context.new_page()

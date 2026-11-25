@@ -19,7 +19,7 @@ except ImportError:  # Reported explicitly when a Ruifeng source is used.
     _pysocks = None
 
 from app.core.models import SourceItem
-from app.sources.base import DataSource, NoSourceRecords
+from app.sources.base import DataSource, NoSourceRecords, lock_browser_profile
 from app.core.http import http_get
 from app.core.cancellation import check_cancelled
 from app.core.progress import report_progress
@@ -145,11 +145,12 @@ class RuifengHistorySource(DataSource):
     # ------------------------------------------------------------------
     # Browser and login
     # ------------------------------------------------------------------
+    def _browser_profile(self):
+        return Path(self.source.get("browser", {}).get("user_data_dir", "./runtime/browser/ruifeng")).resolve()
+
     def _launch_context(self, playwright):
         browser_cfg = self.source.get("browser", {})
-        profile = Path(
-            browser_cfg.get("user_data_dir", "./runtime/browser/ruifeng")
-        ).resolve()
+        profile = self._browser_profile()
         profile.mkdir(parents=True, exist_ok=True)
 
         kwargs = {
@@ -697,7 +698,7 @@ class RuifengHistorySource(DataSource):
         check_cancelled()
         self._ensure_route()
         check_cancelled()
-        with sync_playwright() as playwright:
+        with lock_browser_profile(self._browser_profile()), sync_playwright() as playwright:
             context, page = self._open_history_page(playwright)
             try:
                 self._wait_history_ready(page)
@@ -794,7 +795,7 @@ class RuifengHistorySource(DataSource):
             request_error = exc
 
         check_cancelled()
-        with sync_playwright() as playwright:
+        with lock_browser_profile(self._browser_profile()), sync_playwright() as playwright:
             context, _page = self._open_history_page(playwright)
             try:
                 response = context.request.get(image_url, headers=headers, timeout=30000)
