@@ -7,9 +7,18 @@ from pathlib import Path
 from app.core.models import SourceItem
 
 
+class NetworkUnavailable(RuntimeError):
+    """The source's network prerequisites are missing."""
+
+
+class NoSourceRecords(RuntimeError):
+    """A source successfully queried a day with no usable records."""
+
+
 class DataSource(ABC):
     parallel_image_downloads = False
     image_cache_revision = ""
+    network_button_label = ""
 
     def __init__(self, project_config: dict):
         self.config = project_config

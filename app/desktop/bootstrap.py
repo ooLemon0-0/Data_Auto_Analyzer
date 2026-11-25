@@ -11,7 +11,17 @@ import sys
 
 
 APP_NAME = "AutoAnalyzer"
-VERSION = "1.6.5"
+VERSION = "1.6.10"
+RELEASE_NOTES = (
+    "• 修复数据采集及其他日期下拉日历中部分日期显示为空白的问题。\n\n"
+    "• 修复旋转后的图片在缩放时跳回其他位置。\n\n"
+    "• 新增「数据采集」，按点位和日期范围随机抽取原图，并批量保存到本地。\n\n"
+    "• EasyConnect 改为按需启动。拉取镔鑫数据遇到内网不通时，或手动点击「检查 / 启动 EasyConnect」时，才会尝试启动。\n\n"
+    "• 主界面新增「更新公告」。升级后，前三次启动会自动显示本版公告。\n\n"
+    "• 新增越南铸坯号识别。先配置好 GlobalProtect 和网页中转，再拉取数据。\n\n"
+    "• 越南历史记录和原图下载支持断线重试。原图校验通过后写入本地缓存。\n\n"
+    "• 越南审核统计同步到指定轻推文档，使用现场的六列表头。"
+)
 
 
 def resource_root() -> Path:
@@ -76,8 +86,12 @@ def relocate_config(config: dict, root: Path, browser: Path | None) -> dict:
         source_browser.update(user_data_dir=str(root / "browser" / project["id"]),
                               download_dir=str(root / "downloads" / project["id"]), headless=True)
         sink_browser = project.setdefault("sink", {}).setdefault("browser", {})
-        project['sink'].setdefault('format', {})['include_other'] = True
-        sink_browser.update(user_data_dir=str(root / "browser/qingtui"), remote_debugging_port=19423,
+        project['sink'].setdefault('format', {}).setdefault('include_other', True)
+        port, profile = 19423, "qingtui"
+        if sink_browser.get("dedicated_port"):
+            port, profile = int(sink_browser["dedicated_port"]), project["id"]
+            sink_browser.pop("remote_debugging_url", None)
+        sink_browser.update(user_data_dir=str(root / "browser" / profile), remote_debugging_port=port,
                             allow_interactive_login=True, interactive_login_timeout_seconds=300)
         if browser is not None:
             for browser_config in (source_browser, sink_browser):
@@ -99,7 +113,44 @@ def load_desktop_config() -> dict:
         path = resource_root() / "config/config.json"
     if not path.exists():
         raise RuntimeError("程序内置配置缺失，请重新下载完整的桌面程序")
-    return relocate_config(json.loads(path.read_text(encoding="utf-8")), data_directory(), bundled_browser())
+    root = data_directory()
+    return relocate_config(desktop_config(path, root), root, bundled_browser())
+
+
+def desktop_config(bundled_path: Path, root: Path) -> dict:
+    local = root / "config.json"
+    if local.is_file():
+        return json.loads(local.read_text(encoding="utf-8-sig"))
+
+    bundled = json.loads(bundled_path.read_text(encoding="utf-8"))
+    metadata = bundled_path.with_name("build_info.json")
+    if not metadata.is_file() or json.loads(metadata.read_text(encoding="utf-8")).get("configuration") != "example":
+        return bundled
+
+    # Reuse settings from the latest ready-to-run private package in this Windows profile.
+    # Keep new sample projects from the public build if the older version did not have them.
+    previous = sorted((root / "app-runtime").glob("*/.complete"),
+                      key=lambda marker: marker.stat().st_mtime_ns, reverse=True)
+    for marker in previous:
+        assets = marker.parent / "_internal/desktop_assets"
+        config, info = assets / "config.json", assets / "build_info.json"
+        try:
+            if config.resolve() == bundled_path.resolve():
+                continue
+            if info.is_file() and json.loads(info.read_text(encoding="utf-8")).get("configuration") == "example":
+                continue
+            old = json.loads(config.read_text(encoding="utf-8-sig"))
+            from app.core.config import AppConfig
+            AppConfig.model_validate(old)
+            if not old.get("projects"):
+                continue
+        except (OSError, ValueError):
+            continue
+
+        projects = {project["id"]: project for project in bundled["projects"]}
+        projects.update((project["id"], project) for project in old["projects"])
+        return {**bundled, **old, "projects": list(projects.values())}
+    return bundled
 
 
 def initialize() -> Path:

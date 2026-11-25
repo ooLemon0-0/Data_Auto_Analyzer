@@ -17,6 +17,7 @@ from app.core.progress import progress_scope, report_progress
 from app.core.cancellation import CancellationToken, WorkCancelled, cancel_pause, cancellable_lock, check_cancelled, cancellation_scope
 from app.core.executor import DaemonExecutor
 from app.services.review_service import ReviewService
+from app.sources.base import NetworkUnavailable
 
 
 logger = logging.getLogger(__name__)
@@ -253,7 +254,8 @@ class DownloadManager:
                 status, message, error = "cancelled", "已停止，已完成缓存和审核结果保留；可继续拉取", ""
             else:
                 logger.exception("Point download failed: %s", job["project_id"])
-                status, message, error = "failed", "拉取未完成，已缓存的图片会保留", str(exc)
+                status, error = "failed", str(exc)
+                message = error if isinstance(exc, NetworkUnavailable) else "拉取未完成，已缓存的图片会保留"
         with self.lock:
             live = self.jobs.get(key)
             if live is None or live["attempt"] != attempt:

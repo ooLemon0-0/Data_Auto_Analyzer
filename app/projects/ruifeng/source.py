@@ -19,7 +19,7 @@ except ImportError:  # Reported explicitly when a Ruifeng source is used.
     _pysocks = None
 
 from app.core.models import SourceItem
-from app.sources.base import DataSource
+from app.sources.base import DataSource, NoSourceRecords
 from app.core.http import http_get
 from app.core.cancellation import check_cancelled
 from app.core.progress import report_progress
@@ -715,7 +715,7 @@ class RuifengHistorySource(DataSource):
 
                 if not result:
                     groups = "、".join(self.camera_groups)
-                    raise RuntimeError(
+                    raise NoSourceRecords(
                         f"{business_date.isoformat()} 在相机分组（{groups}）中没有抓到可审核记录"
                     )
                 return result

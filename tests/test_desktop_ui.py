@@ -18,6 +18,74 @@ def app(qapp):
     return qapp
 
 
+def test_collection_calendar_displays_and_selects_dates(app, tmp_path):
+    from types import SimpleNamespace
+    from datetime import date
+    from PySide6.QtCore import QDate, QPoint
+    from PySide6.QtWidgets import QCalendarWidget, QTableView
+    from app.desktop.collection_dialog import CollectionDialog
+
+    dialog = CollectionDialog(None, [SimpleNamespace(id="vietnam", name="越南")], None, tmp_path)
+    submitted = []
+    dialog.submitted.connect(lambda *args: submitted.append(args))
+    dialog.show()
+    app.processEvents()
+
+    for editor, column, day in ((dialog.start, 1, 10), (dialog.end, 2, 11)):
+        editor.setMaximumDate(QDate(2026, 11, 25))
+        editor.setDate(QDate(2026, 11, 25))
+        calendar = editor.calendarWidget()
+        calendar.setFirstDayOfWeek(Qt.DayOfWeek.Monday)
+        calendar.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
+        QTest.mouseClick(editor, Qt.MouseButton.LeftButton,
+                         pos=QPoint(editor.width() - 13, editor.height() // 2))
+        app.processEvents()
+        assert calendar.isVisible()
+        view = calendar.findChild(QTableView)
+        cell = view.visualRect(view.model().index(3, column))
+        # A click still selects a date if its number has been clipped by the theme.
+        # Verify the rendered number in an unselected cell as well.
+        pixels = view.viewport().grab(cell).toImage()
+        assert any(pixels.pixelColor(x, y).value() < 128
+                   for y in range(pixels.height()) for x in range(pixels.width()))
+        QTest.mouseClick(view.viewport(), Qt.MouseButton.LeftButton, pos=cell.center())
+        assert editor.date() == QDate(2026, 11, day)
+
+    QTest.mouseClick(dialog.start_button, Qt.MouseButton.LeftButton)
+    assert submitted == [("vietnam", date(2026, 11, 10), date(2026, 11, 11), 100, tmp_path)]
+
+
+@pytest.mark.parametrize("defer_restore", [True, False])
+def test_easyconnect_is_not_checked_until_the_network_button_is_clicked(app, tmp_path, monkeypatch, defer_restore):
+    from app.desktop.window import ReviewWindow
+    from app.desktop.network import EasyConnectManager
+
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "review.sqlite3")
+    calls = []
+
+    def ensure(_manager, url):
+        calls.append(url)
+        return {"available": True, "message": "内网已连通"}
+
+    monkeypatch.setattr(EasyConnectManager, "ensure", ensure)
+    window = ReviewWindow(defer_restore=defer_restore)
+    if defer_restore:
+        window.downloads.restore_sessions()
+        window.finish_startup()
+    window.show()
+    QTest.qWait(500)
+    assert not calls
+    assert "网络尚未检查" in window.vpn_status.text()
+
+    QTest.mouseClick(window.vpn_button, Qt.MouseButton.LeftButton)
+    deadline = time.monotonic() + 3
+    while window.network_checking and time.monotonic() < deadline:
+        QTest.qWait(20)
+    assert len(calls) == 1
+    assert "内网已连通" in window.vpn_status.text()
+    window.close()
+
+
 def test_modal_progress_cannot_be_dismissed_while_downloading(app):
     dialog = ProgressDialog()
     dialog.show()
@@ -45,7 +113,7 @@ def test_worker_modal_stays_responsive_and_failure_unlocks_workspace(app, tmp_pa
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "review.sqlite3")
     QSettings.setDefaultFormat(QSettings.Format.IniFormat)
     QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path / "preferences"))
-    window = ReviewWindow(check_network=False)
+    window = ReviewWindow()
     assert window.auto_upload.isChecked()
     assert window.preferences.fileName().replace("\\", "/").startswith(tmp_path.as_posix())
     window.manual_report.setChecked(True)
@@ -80,7 +148,7 @@ def test_review_buttons_save_replenish_and_enable_upload_after_completion(app, t
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "review.sqlite3")
     QSettings.setDefaultFormat(QSettings.Format.IniFormat)
     QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path / "preferences"))
-    window = ReviewWindow(check_network=False)
+    window = ReviewWindow()
     assert [b.text().split("快捷键 ")[-1] for b in window.decision_buttons] == ["1", "2", "3", "4"]
     window.manual_report.setChecked(True)
     project = window._current_project()
@@ -119,7 +187,7 @@ def test_batch_selection_first_ready_review_and_progress_hide_reopen(app, tmp_pa
     from app.desktop.downloads import task_key
     from app.desktop.window import ReviewWindow
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "review.sqlite3")
-    window = ReviewWindow(check_network=False)
+    window = ReviewWindow()
     window.manual_report.setChecked(True)
     window.show()
     assert window.task_category.currentData() == ""  # Point selection still uses the popup.
@@ -213,7 +281,7 @@ def test_close_allows_stop_and_exit_with_download_running(app, tmp_path, monkeyp
     from app.core.cancellation import cancel_pause
     from app.desktop.window import ReviewWindow
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "review.sqlite3")
-    window = ReviewWindow(check_network=False)
+    window = ReviewWindow()
     window.manual_report.setChecked(True)
     window.show()
     entered = Event()

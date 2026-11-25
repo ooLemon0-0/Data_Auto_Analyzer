@@ -94,7 +94,7 @@ def test_dialog_changes_date_and_disables_copy_for_empty_day(qapp, local_review)
 def test_manual_mode_persists_and_blocks_even_forced_pending_sync(qapp, local_review, monkeypatch):
     from app.desktop.window import ReviewWindow
     service, prepare = local_review
-    window = ReviewWindow(check_network=False)
+    window = ReviewWindow()
     window.sync_timer.stop()
     window.cache_timer.stop()
     state = prepare(window.projects[0].id, date(2026, 2, 10), ['correct', 'incorrect'])
@@ -110,7 +110,7 @@ def test_manual_mode_persists_and_blocks_even_forced_pending_sync(qapp, local_re
     assert window.manual_report.isChecked() and not window.auto_upload.isChecked()
     assert window.auth_button.isHidden() and window.upload_button.text() == '查看统计表'
     window.close()
-    restarted = ReviewWindow(check_network=False)
+    restarted = ReviewWindow()
     assert restarted.manual_report.isChecked() and not restarted.auto_upload.isChecked()
     # Durable uploads remain recoverable if the user later selects automatic sync.
     assert restarted.sync.due() is not None
@@ -124,7 +124,7 @@ def test_completed_review_opens_daily_table_once_and_button_reopens(qapp, local_
     from PySide6.QtGui import QImage
     from app.desktop.window import ReviewWindow
     _, prepare = local_review
-    window = ReviewWindow(check_network=False)
+    window = ReviewWindow()
     window.manual_report.setChecked(True)
     pid = window.projects[0].id
     day = date(2026, 2, 10)
@@ -152,6 +152,6 @@ def test_old_opt_out_is_migrated_to_table_mode(qapp, local_review):
     prefs = QSettings(str(db.DB_PATH.parent / 'desktop-preferences.ini'), QSettings.Format.IniFormat)
     prefs.setValue('auto_upload', False)
     prefs.sync()
-    window = ReviewWindow(check_network=False)
+    window = ReviewWindow()
     assert window.manual_report.isChecked()
     window.close()

@@ -16,7 +16,7 @@ from playwright.sync_api import sync_playwright
 
 from app.core.config import settings
 from app.core.models import SourceItem
-from app.sources.base import DataSource
+from app.sources.base import DataSource, NoSourceRecords
 
 
 class Binxin77HistorySource(DataSource):
@@ -397,6 +397,7 @@ class Binxin77HistorySource(DataSource):
                 "image_url": image_url,
                 "image_name": basename,
                 "record_id": record_id,
+                "original_image_url": record.get("identifyFullUrl") or "",
                 "camera_id": record.get("cameraId") or "",
                 "source_page": page_no,
                 "source_row": row_no,
@@ -729,7 +730,7 @@ class Binxin77HistorySource(DataSource):
                     item.metadata["data_export_archive"] = str(archive) if archive else ""
 
                 if not items:
-                    raise RuntimeError(f"{business_date.isoformat()} 没有抓到可审核记录")
+                    raise NoSourceRecords(f"{business_date.isoformat()} 没有抓到可审核记录")
                 return items
             finally:
                 context.close()

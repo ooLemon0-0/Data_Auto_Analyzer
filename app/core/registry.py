@@ -24,6 +24,11 @@ def build_source(project: dict):
     return SOURCE_FACTORIES[source_type](project)
 
 
+def network_button_label(project) -> str:
+    factory = SOURCE_FACTORIES.get(project.source.get("type")) if project else None
+    return getattr(factory, "network_button_label", "")
+
+
 def build_sink(project: dict):
     sink_type = project.get("sink", {}).get("type")
     if sink_type not in SINK_FACTORIES:

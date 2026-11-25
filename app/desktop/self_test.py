@@ -115,7 +115,7 @@ def run_self_test(output: Path) -> int:
         assert queue.due() is None
         report["checks"]["durable_sync_queue"] = True
         from app.desktop.window import ReviewWindow
-        window = ReviewWindow(check_network=False)
+        window = ReviewWindow()
         assert Path(window.preferences.fileName()).is_relative_to(test_dir)
         assert window.auto_upload.isChecked(), "新用户应默认自动同步"
         report["checks"]["isolated_preferences"] = True

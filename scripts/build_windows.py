@@ -14,12 +14,22 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from app.desktop.bootstrap import VERSION
+from app.desktop.bootstrap import RELEASE_NOTES, VERSION
+
+
+def read_build_config(path):
+    config = json.loads(path.read_text(encoding="utf-8-sig"))
+    for project in config["projects"]:
+        if project["id"] == "binxin_billet":
+            project["sink"]["selectors"]["sheet_name"] = "1期-73"
+    return config
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=Path, default=ROOT / "config/config.json")
+    config_option = parser.add_mutually_exclusive_group()
+    config_option.add_argument("--config", type=Path, help="Local configuration for an internal build")
+    config_option.add_argument("--public", action="store_true", help="Bundle only the example configuration")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "release")
     parser.add_argument("--browser-executable", type=Path, help="Reuse an existing Chromium executable when building offline")
     args = parser.parse_args()
@@ -31,11 +41,8 @@ def main():
 
     stage = ROOT / "build/desktop_assets"
     stage.mkdir(parents=True, exist_ok=True)
-    config = json.loads(args.config.read_text(encoding="utf-8"))
-    # The document's existing first-phase tab was renamed on site.
-    for project in config["projects"]:
-        if project["id"] == "binxin_billet":
-            project["sink"]["selectors"]["sheet_name"] = "1期-73"
+    config_path = ROOT / "config/config.example.json" if args.public else (args.config or ROOT / "config/config.json")
+    config = read_build_config(config_path)
     (stage / "config.json").write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
     if args.browser_executable:
         browser = args.browser_executable.resolve()
@@ -45,6 +52,7 @@ def main():
     if not browser.exists():
         raise SystemExit("先执行 python -m playwright install chromium --no-shell 安装打包所需的浏览器")
     manifest = {"version": VERSION, "browser_revision": browser.parent.parent.name,
+                "configuration": "example" if args.public else "local",
                 "built_at": datetime.now(timezone(timedelta(hours=8))).isoformat(timespec="seconds")}
     (stage / "build_info.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     icon = Image.new("RGBA", (256, 256), "#16345d")
@@ -107,12 +115,12 @@ collection = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name='Aut
     digest = hashlib.file_digest(target.open("rb"), "sha256").hexdigest()
     update_manifest = {'version': VERSION, 'url': f'https://github.com/ooLemon0-0/Data_Auto_Analyzer/releases/download/v{VERSION}/AutoAnalyzer.exe',
         'sha256': digest, 'size': target.stat().st_size,
-        'notes': '新增镔鑫一期 88 点位，汇总两台 OCR 相机，支持后台拉取、完整原图审核及轻推同步或复制统计表。'}
+        'notes': RELEASE_NOTES}
     (release / 'update.json').write_text(json.dumps(update_manifest, ensure_ascii=False, indent=2), encoding='utf-8')
     (release / "SHA256SUMS.txt").write_text(f"{digest}  AutoAnalyzer.exe\n{digest}  {target.name}\n", encoding="utf-8")
     (release / "使用说明.txt").write_text(
         f"数据抽样审核 桌面版 {VERSION}（Windows 10/11 64 位）\n\n"
-        "1. 双击“数据抽样审核.exe”，无需安装 Python 或浏览器，无需修改配置文件。\n"
+        "1. 双击“数据抽样审核.exe”，无需安装 Python 或浏览器。\n"
         "   先显示加载窗口；运行文件只在首次使用或升级后安装，之后从本机缓存启动。\n"
         "   组件从 EXE 本地解压，无需联网下载；重复打开同一版本会复用已解压文件。\n"
         "   加载窗口显示运行文件校验、组件安装、配置读取和本地任务恢复进度，可随时退出。\n"
@@ -123,9 +131,11 @@ collection = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name='Aut
         "   图片缓存达到 10 GB 后，后台从最旧日期逐天清理至低于阈值；正在下载或审核的日期跳过。\n"
         "   自动清理不弹窗，不影响审核和退出；审核记录、统计及登录状态保留。\n"
         "   本地任务支持分类和搜索；“筛选 / 排序”可组合日期范围、审核状态及排序。\n"
-        "2. 请先安装企业 EasyConnect 客户端。程序会检查并自动启动；VPN 登录或动态验证需本人完成。\n"
+        "2. 请先安装企业 EasyConnect 客户端。拉取镔鑫数据时按需启动，也可在主界面手动启动。VPN 登录或动态验证需本人完成。\n"
         "3. 点击“拉取数据 · 选择点位”，在弹窗里勾选多个点位、日期和每点有效样本数，再开始拉取。\n"
-        "   镔鑫一期新增 88 点位，两台 OCR 相机合并统计；轻推自动创建或更新“1期-88”工作表。\n"
+        "   越南点位需先手动建立 GlobalProtect 和站点中转，再拉取历史记录。\n"
+        "   越南原图下载失败时自动重试，校验通过才写入缓存。\n"
+        "   点击“数据采集”可按点位、日期区间和张数随机下载未加工原图，可另选保存文件夹。\n"
         "   不同站点最多 4 个项目同时准备；镔鑫图片每点 4 路并发，全局最多 8 张同时下载。\n"
         "4. 任一点位就绪后即可先审核，其余任务继续后台下载。点击左侧任务切换审核点位。\n"
         "   进度窗口可收起或关闭，不会停止任务；点击主界面“下载进度”随时重新查看。\n"
@@ -148,7 +158,10 @@ collection = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name='Aut
         "8. 上传失败不丢失审核数据；网络问题会自动重试，也可点“立即同步 / 重试”。\n"
         "9. 本地缓存和审核进度位于 %LOCALAPPDATA%\\AutoAnalyzer，更新 exe 不会清除。\n"
         "10. 瑞丰点位仍需要企业 aTrust / 远程桌面通道就绪，首次远端部署依现场环境完成。\n\n"
-        "已内置网站账号、点位和目标文档，以及独立 Chromium 与 Qt 界面组件。无需安装 Google Chrome。\n"
+        + ("公开版随附示例点位配置。升级时会沿用同一 Windows 用户下已经解压的现场配置。\n"
+           "首次使用或需要新增点位时，将授权的 config.json 放到 %LOCALAPPDATA%\\AutoAnalyzer\\config.json。\n"
+           if args.public else "本地版使用构建时指定的现场配置。\n")
+        + "内置独立 Chromium 与 Qt，无需安装 Google Chrome。\n"
         "企业 VPN 与轻推的交互验证无法用网站密码代替；轻推文档同步目前仍使用内置浏览器。\n",
         encoding="utf-8-sig")
     print(json.dumps({"exe": str(target), "bytes": target.stat().st_size, "sha256": digest, **launcher}))

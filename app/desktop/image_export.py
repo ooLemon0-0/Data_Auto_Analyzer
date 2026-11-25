@@ -16,14 +16,22 @@ def downloads_directory():
     return Path(location) if location else Path.home() / 'Downloads'
 
 
-def save_original_image(source, project, day, source_key, *, directory=None):
+def original_image_suffix(source, *, decode=False):
     from PIL import Image
-    source = Path(source)
     with Image.open(source) as image:
         suffix = { 'JPEG': '.jpg', 'PNG': '.png', 'WEBP': '.webp', 'BMP': '.bmp', 'TIFF': '.tif', 'GIF': '.gif' }.get(image.format)
-        image.verify()
+        if decode:
+            image.load()
+        else:
+            image.verify()
     if not suffix:
         raise ValueError('原图格式暂不支持保存')
+    return suffix
+
+
+def save_original_image(source, project, day, source_key, *, directory=None):
+    source = Path(source)
+    suffix = original_image_suffix(source)
     if directory is None:
         directory = downloads_directory()
     directory = Path(directory)

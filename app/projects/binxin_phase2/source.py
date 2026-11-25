@@ -16,7 +16,7 @@ from app.core.models import SourceItem
 from app.core.progress import report_progress, shared_collection_cache
 from app.core.http import http_get, http_session
 from app.core.cancellation import check_cancelled, cancel_pause, cancellable_lock
-from app.sources.base import DataSource
+from app.sources.base import DataSource, NoSourceRecords
 from app.projects.binxin_phase2.review_image import REVISION, parse_box, render_review
 
 
@@ -278,7 +278,7 @@ class BinxinPhase2HistorySource(DataSource):
                 camera = self._resolve_camera(session)
                 items = self._fetch_camera_day(session, camera, business_date)
         if not items:
-            raise RuntimeError(f"{business_date.isoformat()} 点位“{self.point_name}”没有可审核记录")
+            raise NoSourceRecords(f"{business_date.isoformat()} 点位“{self.point_name}”没有可审核记录")
         return items
 
     def materialize_image(self, image_url: str, destination: Path) -> Path:

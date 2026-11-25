@@ -1,7 +1,15 @@
 # 多项目数据抽样审核平台
 
 Windows 桌面版使用原生 Qt 界面，可并发拉取多个点位、审核图片并同步轻推。
-镔鑫一期包含 88 点位：使用新版 OCR HTTP 接口，校验并汇总配置的两台相机；历史记录缺少 `cameraId` 时依据图片文件名中的已知相机标识还原来源，来源不明或冲突时中止。使用完整原图生成端面框复核图，保存时仍导出未渲染原图；独立审核、缓存及统计，自动同步到“1期-88”工作表，缺失时自动创建，也可选择复制每日统计表。真实地址与登录信息只保留在本地配置及正式 EXE 中。
+
+「数据采集」按点位、起止日期和数量随机下载独立原图，默认保存到 Windows 下载文件夹，也可另选位置。采集不会新建审核任务。下载完成或停止后，已保存的原图会保留。
+
+越南铸坯号识别使用越南业务系统的历史接口，审核日期按业务页面的北京时间计算。先在程序外连接 GlobalProtect 并建立越南网页中转，再选择越南点位拉取。默认中转地址为 `http://127.0.0.1:23180`。越南点位只检查 VPN 进程和站点连通性。历史请求与图片下载会在暂时断线时重试，已完成缓存可在继续拉取时复用。图片写入缓存前校验长度、对象摘要（接口提供时）并完整解码。
+
+越南业务网站账号可在桌面版的 `%LOCALAPPDATA%\AutoAnalyzer\config.json` 配置，或用 `AUTOANALYZER_VIETNAM_USERNAME` 和 `AUTOANALYZER_VIETNAM_PASSWORD` 环境变量覆盖。示例配置中的现场主机名为占位值。
+
+越南轻推同步使用独立的浏览器会话，首次同步可能需要扫码。程序按六列表头定位现有工作表。同一天的审核统计会覆盖该日期的旧记录。更新公告按版本在前三次正常启动时自动显示，之后可从主界面的「更新公告」按钮查看。
+镔鑫一期包含 88 点位：使用新版 OCR HTTP 接口，校验并汇总配置的两台相机；历史记录缺少 `cameraId` 时依据图片文件名中的已知相机标识还原来源，来源不明或冲突时中止。使用完整原图生成端面框复核图，保存时仍导出未渲染原图；独立审核、缓存及统计，自动同步到“1期-88”工作表，缺失时自动创建，也可选择复制每日统计表。
 “审核完成后”提供两个互斥选项并记住选择：自动同步轻推，或生成每日统计表、手动复制。手动模式暂停所有轻推同步及旧任务重试，完成审核后弹出当前任务日期的统计；可切换日期、刷新或重新打开“查看统计表”。复制按钮同时提供 HTML 表格和制表符文本，可直接粘贴到 WPS / 轻推，也可取消包含表头。表格按指定的九列输出，遮挡、连字默认留空；总计含全部已审核图片，模糊与其他合并列入“其他”，准确率仍按正确 ÷（正确 + 错误）计算。未完成点位不导出；历史审核判定保留。
 EXE 先显示 Windows 加载窗口，再校验并安装运行文件到本机 `app-runtime` 缓存；相同版本再次打开时复用缓存。随后加载窗口显示组件、配置和本地任务恢复状态。运行文件和图片缓存分开保存，不影响审核数据。
 启动组件来自 EXE 内置文件，无需联网下载。首次使用、升级及组件缺失会分别显示准备或修复状态；同一安装包重复启动直接复用缓存。`logs/startup-last.json` 记录最近一次是否解压及原因。
@@ -9,23 +17,23 @@ EXE 先显示 Windows 加载窗口，再校验并安装运行文件到本机 `ap
 主界面“缓存空间”按采集日期统计原图与复核图大小，支持勾选多个日期清理。审核和同步记录保留，之后继续拉取会沿用原抽样和判定；正在拉取的日期需先停止任务。
 图片缓存达到 10 GB（10 × 1024³ 字节）时，程序在后台按采集日期从旧到新逐天清理，直到低于阈值。启动后、下载结束及每分钟检查一次；正在下载或审核的日期跳过，暂时无法清理的缓存下次再试。自动清理不弹窗、不锁定界面，退出时无需等待；只删除图片，不删除审核、统计、同步记录或浏览器登录状态。
 本地任务可按镔鑫一期、镔鑫二期、芜湖、瑞丰等分类，支持关键词搜索，以及日期范围、审核状态和分类内排序；“筛选 / 排序”窗口可组合条件并应用到左侧列表。新增项目可通过 `category` 字段指定分类。
-便携版从 [GitHub Releases](https://github.com/ooLemon0-0/Data_Auto_Analyzer/releases) 下载，内置现场配置与 Chromium，不需要另装 Python 或 Chrome。
+便携版内置 Chromium 和示例点位配置，可从 [GitHub Releases](https://github.com/ooLemon0-0/Data_Auto_Analyzer/releases) 下载。同一 Windows 用户升级时可沿用旧版解压的现场配置。首次使用或需要新增点位时，将授权的 `config.json` 放到 `%LOCALAPPDATA%\AutoAnalyzer\config.json`。
 
 每次启动正式 EXE 都必须检查最新版本。发现新版后自动下载并安装，更新完成前不能进入旧版；仅更新服务无法连接时允许离线进入。元数据、校验或安装错误必须重试或退出。主检查使用 GitHub API，访问失败时尝试 Release 的 update.json，避免 API 限流导致漏检。v1.6.3 之前的程序需先升级一次才具备此强制策略。
 选择更新后会校验大小和 SHA-256，退出旧进程后原子替换 EXE 并重启；本地审核、图片及登录状态保存在 AppData，不随更新清除。
 
-源码只提供脱敏配置。真实地址、账号、密码和文档链接保留在未跟踪的 `config/config.json`；构建时嵌入正式 EXE。缓存、登录会话、日志、构建目录和 EXE 不提交到源码 Git。
+源码和公开 EXE 使用脱敏配置。现场地址、账号、密码和文档链接通过本机授权配置使用。缓存、登录会话、日志、构建目录和 EXE 不提交到源码 Git。
 配置示例和测试中的地址使用文档示例网段，不能直接访问现场系统。
 
 维护发布流程：
 
 构建机需要 Visual Studio 的 C++ 工具和 Windows 10 SDK，用于编译原生启动窗口。客户端无需安装这些开发工具。
-可用 `--output-dir release/v版本号` 保留各版构建；`--browser-executable` 可指定已有 Chromium，供离线构建复用。发布时默认优先读取当前版本目录，也可用 `--release-dir` 指定。
+公开版用 `--public` 构建。发布脚本默认读取 `release/public/v版本号`，也可用 `--release-dir` 指定。`--browser-executable` 可指定已有 Chromium，供离线构建复用。
 
 ```powershell
 # 在本地维护 config/config.json；不提交这个文件。
 python scripts/check_source_secrets.py
-python -I scripts/build_windows.py
+python -I scripts/build_windows.py --public --output-dir release/public/v1.6.10
 # 检查并提交脱敏源码，推送后发布对应 commit 的 Release。
 python scripts/publish_release.py --commit <pushed-commit>
 ```
@@ -1604,16 +1612,15 @@ source.materialize_image()
 
 # 20. Windows 启动
 
-## 20.0 免配置桌面 exe
+## 20.0 便携桌面 exe
 
 桌面入口为 `desktop.py`，1.3.0 使用原生 Qt 工作台审核图片，不启动本地 Web 服务。
-发布文件是 `release/数据抽样审核.exe`，面向 Windows 10/11 64 位，包含 Python、Qt、Pillow、
-Playwright 驱动和配套 Chromium，接收者不需要安装 Python、Google Chrome 或 Qt，也无需编辑配置文件。
+公开发布文件为 `AutoAnalyzer.exe`，面向 Windows 10/11 64 位，内置 Python、Qt、Pillow、Playwright 驱动和配套 Chromium。
 
 桌面版行为：
 
-- 启动时检查 EasyConnect 进程，未启动且已安装时自动启动；同时探测内网是否可达。
-- 点位、网站账号密码及轻推目标文档打入 exe；首次使用不要求填写网站配置。
+- EasyConnect 按需启动。拉取镔鑫数据遇到内网不通时，或手动点击「检查 / 启动 EasyConnect」时，才会尝试启动。
+- 点位、网站账号密码及轻推目标文档来自本机授权配置。首次使用请将配置文件放到 `%LOCALAPPDATA%\AutoAnalyzer\config.json`。
 - 点击“拉取数据 · 选择点位”后，在弹窗多选点位、日期和每点有效样本数，无需下拉选择单个点位。
 - 不同站点最多 4 个项目同时准备；HTTP 图片每点最多 4 路并发、全局最多 8 张。网页采集源仍串行使用各自浏览器配置。
 - 同一站点按任务顺序拉取，同批次、同日期、同业务组的镔鑫二期记录只查询一次，再按相机严格隔离；不同批次不复用远端历史快照。
@@ -1634,7 +1641,6 @@ Playwright 驱动和配套 Chromium，接收者不需要安装 Python、Google C
 - 桌面版关闭日志诊断入口，使用与 Web 版相同的审核核心和项目插件。
 
 EasyConnect 需要先由企业安装；企业 VPN 登录、动态验证以及轻推首次扫码仍需本人完成。
-内置的是网站账号，不会把开发者的浏览器登录会话或审核数据库分发给其他实习生。
 瑞丰点位仍依赖 aTrust / 远程桌面通道，首次远端部署按下节说明完成。
 轻推 / WPS 文档同步目前使用内置浏览器完成交互与回读，首次扫码或登录过期时仍会出现验证窗口。
 
@@ -1643,11 +1649,10 @@ EasyConnect 需要先由企业安装；企业 VPN 登录、动态验证以及轻
 ```powershell
 .\.venv\Scripts\python.exe -I -m pip install -r requirements-desktop.txt
 .\.venv\Scripts\python.exe -I -m playwright install chromium --no-shell
-.\.venv\Scripts\python.exe -I scripts/build_windows.py
+.\.venv\Scripts\python.exe -I scripts/build_windows.py --public --output-dir release/public/v1.6.10
 ```
 
-构建从本机 `config/config.json` 读取已授权的账号和点位，嵌入 exe；发布目录及包含凭据的
-构建目录均不提交 Git。账号或目标文档变更后重新打包，实习生只需替换 exe。
+公开版构建读取 `config/config.example.json`。账号或目标文档变更后，更新桌面版使用的本机配置文件即可。
 构建脚本将一期 73 的桌面上传目标映射到现场已有的 `1期-73` 工作表。
 
 打包后可执行 `数据抽样审核.exe --self-test report.json` 验证独立运行环境，

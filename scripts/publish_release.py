@@ -12,13 +12,35 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import zipfile
 
 import requests
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from app.desktop.bootstrap import VERSION
+from app.desktop.bootstrap import RELEASE_NOTES, VERSION
 from app.desktop.updates import REPOSITORY
+from scripts.build_windows import read_build_config
+from scripts.check_source_secrets import credentials
+
+
+def public_release_directory(release_dir):
+    folder = release_dir or ROOT / "release/public" / f"v{VERSION}"
+    binary = folder / "数据抽样审核.exe"
+    with zipfile.ZipFile(binary) as package:
+        config = json.loads(package.read("_internal/desktop_assets/config.json"))
+        build = json.loads(package.read("_internal/desktop_assets/build_info.json"))
+    example = read_build_config(ROOT / "config/config.example.json")
+    if config != example or credentials(config) or build.get("configuration") != "example" or build.get("version") != VERSION:
+        raise SystemExit("GitHub publishing requires the matching --public build with only the example configuration")
+    manifest = json.loads((folder / "update.json").read_text(encoding="utf-8"))
+    with binary.open("rb") as file:
+        digest = hashlib.file_digest(file, "sha256").hexdigest()
+    expected_url = f"https://github.com/{REPOSITORY}/releases/download/v{VERSION}/AutoAnalyzer.exe"
+    if (manifest.get("version"), manifest.get("url"), manifest.get("size"), manifest.get("sha256")) != (
+            VERSION, expected_url, binary.stat().st_size, digest):
+        raise SystemExit("Update manifest does not match the binary")
+    return folder
 
 
 def main():
@@ -26,6 +48,7 @@ def main():
     parser.add_argument("--commit", required=True, help="Pushed source commit to release")
     parser.add_argument("--release-dir", type=Path, help="Directory containing the verified release files")
     args = parser.parse_args()
+    release_dir = public_release_directory(args.release_dir)
     subprocess.run([sys.executable, str(ROOT / "scripts/check_source_secrets.py"), "--staged"], cwd=ROOT, check=True)
     commit = subprocess.check_output(["git", "rev-parse", args.commit], cwd=ROOT, text=True).strip()
     token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
@@ -46,7 +69,8 @@ def main():
     if lookup.status_code == 404:
         response = session.post(api + "/releases", json={"tag_name": tag, "target_commitish": commit,
             "name": f"数据抽样审核 {tag} · Windows", "draft": True, "prerelease": False,
-            "body": 'Windows 10/11 64 位便携版，下载 AutoAnalyzer.exe 即可运行。\n\n- 联网发现新版后自动下载、校验并重启，完成前不能进入旧版；仅更新服务无法连接时可离线进入。\n- 提供备用更新清单入口，修复更新安装脚本对 PowerShell Get-FileHash 的依赖。\n- 新增“其他”（快捷键4），单独计数，不计正确率并自动补抽；轻推统计追加其他列。\n- 保存前必须确认，只复制现场完整原始文件，不保存框图、识别裁图或界面缩放/旋转结果。\n\nv1.6.3 之前的程序需先升级一次，之后才具备新的强制更新策略。'}, timeout=20)
+            "body": ('Windows 10/11 64 位便携版。旧版更新时沿用本机点位配置。首次使用或配置新点位时，'
+                     '将授权的 config.json 放到 %LOCALAPPDATA%\\AutoAnalyzer\\config.json。\n\n' + RELEASE_NOTES)}, timeout=20)
         response.raise_for_status()
         release = response.json()
     else:
@@ -61,9 +85,6 @@ def main():
         ("SHA256SUMS.txt", "SHA256SUMS.txt", "text/plain"),
         ("使用说明.txt", "README-Windows.txt", "text/plain"),
         ("update.json", "update.json", "application/json")]:
-        release_dir = args.release_dir or (ROOT / "release" / ("v" + VERSION))
-        if args.release_dir is None and not release_dir.is_dir():
-            release_dir = ROOT / "release"
         local = release_dir / local_name
         digest = hashlib.file_digest(local.open("rb"), "sha256").hexdigest()
         if asset_name in existing:

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import csv
+import ctypes
+from ctypes import wintypes
 import os
 from pathlib import Path
 import subprocess
@@ -8,6 +10,40 @@ import subprocess
 import requests
 from app.core.cancellation import check_cancelled
 from app.core.http import http_get
+
+
+def running_processes() -> set[str]:
+    check_cancelled()
+    if os.name != "nt":
+        return set()
+    class ProcessEntry(ctypes.Structure):
+        _fields_ = [("size", wintypes.DWORD), ("usage", wintypes.DWORD), ("pid", wintypes.DWORD),
+                    ("heap", ctypes.c_size_t), ("module", wintypes.DWORD), ("threads", wintypes.DWORD),
+                    ("parent", wintypes.DWORD), ("priority", wintypes.LONG), ("flags", wintypes.DWORD),
+                    ("name", wintypes.WCHAR * 260)]
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    snapshot = kernel.CreateToolhelp32Snapshot
+    snapshot.argtypes = (wintypes.DWORD, wintypes.DWORD)
+    snapshot.restype = wintypes.HANDLE
+    handle = snapshot(2, 0)  # TH32CS_SNAPPROCESS
+    if handle == ctypes.c_void_p(-1).value:
+        return set()
+    first, following = kernel.Process32FirstW, kernel.Process32NextW
+    first.argtypes = following.argtypes = (wintypes.HANDLE, ctypes.POINTER(ProcessEntry))
+    first.restype = following.restype = wintypes.BOOL
+    kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+    entry = ProcessEntry(size=ctypes.sizeof(ProcessEntry))
+    names = set()
+    try:
+        has_entry = first(handle, ctypes.byref(entry))
+        while has_entry:
+            names.add(entry.name.lower())
+            has_entry = following(handle, ctypes.byref(entry))
+    finally:
+        kernel.CloseHandle(handle)
+    check_cancelled()
+    return names
 
 
 class EasyConnectManager:

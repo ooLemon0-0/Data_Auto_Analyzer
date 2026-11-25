@@ -44,6 +44,41 @@
   ],
   "projects": [
     {
+      "id": "vietnam_billet",
+      "name": "越南铸坯号识别",
+      "category": "越南",
+      "enabled": true,
+      "daily_target": 50,
+      "source": {
+        "type": "vietnam_history",
+        "base_url": "http://127.0.0.1:23180",
+        "storage_origin": "http://192.0.2.18:19000",
+        "camera_name": "192.0.2.17",
+        "image_download_workers": 2,
+        "auth": {"username": "", "password": ""}
+      },
+      "sink": {
+        "type": "vietnam_qingtui",
+        "enabled": false,
+        "document_url": "https://web.qingtui.com/drive/preview/EXAMPLE_DOCUMENT_ID",
+        "format": {
+          "columns": [
+            {"field": "date", "header": "日期"},
+            {"field": "sample_count", "header": "抽样数"},
+            {"field": "correct", "header": "正确数量"},
+            {"field": "incorrect", "header": "错误数量"},
+            {"field": "invalid", "header": "模糊、喷印差数量"},
+            {"field": "accuracy", "header": "准确率"}
+          ],
+          "date_output_format": "%Y/%m/%d",
+          "accuracy_suffix": "",
+          "include_other": false
+        },
+        "browser": {"dedicated_port": 19424},
+        "selectors": {"match_document_url": true}
+      }
+    },
+    {
       "id": "binxin_billet",
       "name": "镔鑫铸坯号识别（73/84）",
       "enabled": true,

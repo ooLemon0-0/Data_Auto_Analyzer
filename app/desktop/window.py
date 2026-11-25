@@ -16,14 +16,17 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QRadioButton, QComboB
 
 from app import db
 from app.core.config import settings
+from app.core.registry import build_source, network_button_label
 from app.core.progress import progress_scope
 from app.core.cancellation import CancellationToken, WorkCancelled, cancellation_scope
-from app.desktop.bootstrap import VERSION, data_directory
+from app.desktop.bootstrap import RELEASE_NOTES, VERSION, data_directory
 from app.desktop.batch_dialogs import DownloadProgressDialog, ProjectSelectionDialog
 from app.desktop.downloads import DownloadManager, task_key
 from app.desktop.cache_store import CacheStore, format_bytes
 from app.desktop.cache_cleanup import CacheMaintenance, CACHE_CHECK_INTERVAL_MS
 from app.desktop.cache_dialog import CacheDialog
+from app.desktop.collection import collect_originals
+from app.desktop.collection_dialog import CollectionDialog
 from app.desktop.image_export import save_original_image, downloads_directory
 from app.desktop.task_dialog import TaskBrowserDialog
 from app.desktop.tasks import CATEGORIES, TaskQuery, filter_tasks, project_category, review_summaries, task_rows
@@ -48,7 +51,7 @@ class JobSignals(QObject):
 
 
 class ReviewWindow(QMainWindow):
-    def __init__(self, *, check_network: bool = True, defer_restore: bool = False):
+    def __init__(self, *, defer_restore: bool = False):
         super().__init__()
         self.service = ReviewService()
         db.init_db()
@@ -64,13 +67,16 @@ class ReviewWindow(QMainWindow):
         self.statistics_dialog = None
         self.reported_completions = {}
         self.selection_dialog = None
+        self.collection_dialog = None
         self.restoring = True
         self.network_checking = False
         self.foreground_token, self.exit_dialog = None, None
+        self._active_collection = False
         self.network_token = CancellationToken()
         self.busy, self.closed = False, False
         self.progress_dialog = None
         self.notice = None
+        self.update_announcement = None
         self.controls, self.decision_buttons, self.shortcuts = [], [], []
         self.preferences = QSettings(str(Path(db.DB_PATH).resolve().parent / "desktop-preferences.ini"), QSettings.Format.IniFormat)
         try:
@@ -106,25 +112,19 @@ class ReviewWindow(QMainWindow):
             self.downloads.restore_sessions()
             self.restoring = False
             QTimer.singleShot(0, self._maybe_open_ready)
-        if not check_network:
-            self.vpn_status.setText("●  网络尚未检查")
         self.sync_timer = QTimer(self)
         self.sync_timer.timeout.connect(self._try_sync)
         if not defer_restore:
             self.sync_timer.start(5000)
             self.cache_timer.start()
             QTimer.singleShot(5000, self._check_cache_limit)
-        if check_network and not defer_restore:
-            QTimer.singleShot(250, self.check_network)
 
-    def finish_startup(self, *, check_network=True):
+    def finish_startup(self):
         self.restoring = False
         self.sync_timer.start(5000)
         self.cache_timer.start()
         QTimer.singleShot(5000, self._check_cache_limit)
         QTimer.singleShot(0, self._maybe_open_ready)
-        if check_network:
-            QTimer.singleShot(250, self.check_network)
 
     def _build(self):
         self.setWindowTitle(f"数据抽样审核  ·  {VERSION}")
@@ -151,6 +151,8 @@ class ReviewWindow(QMainWindow):
         self.subtitle.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         titles.addWidget(self.subtitle)
         header.addLayout(titles, 1)
+        self.update_announcement_button = button("更新公告", self.show_update_announcement, glyph="info")
+        header.addWidget(self.update_announcement_button)
         self.cache_button = button("缓存空间", self.show_cache_manager, glyph="folder")
         self.controls.append(self.cache_button)
         header.addWidget(self.cache_button)
@@ -235,6 +237,9 @@ class ReviewWindow(QMainWindow):
         self.fetch_button.setMinimumHeight(46)
         self.controls.append(self.fetch_button)
         box.addWidget(self.fetch_button)
+        self.collection_button = button("数据采集", self.open_collection, glyph="download")
+        self.controls.append(self.collection_button)
+        box.addWidget(self.collection_button)
         task_heading = QHBoxLayout()
         task_heading.addWidget(label("本地审核任务", section=True), 1)
         task_heading.addWidget(button("筛选 / 排序", self.show_task_browser, variant="ghost"))
@@ -293,7 +298,7 @@ class ReviewWindow(QMainWindow):
         network_box = QVBoxLayout(network)
         network_box.setContentsMargins(12, 12, 12, 12)
         network_box.setSpacing(4)
-        self.vpn_status = label("●  正在检查企业内网")
+        self.vpn_status = label("●  网络尚未检查")
         self.vpn_status.setStyleSheet("font-size: 12px; color: #8A829D;")
         self.vpn_status.setWordWrap(True)
         network_box.addWidget(self.vpn_status)
@@ -443,19 +448,29 @@ class ReviewWindow(QMainWindow):
         self.upload_button.setEnabled(can_review and self.state["complete"])
         for shortcut in self.shortcuts:
             shortcut.setEnabled(not self.busy)
+        self.vpn_button.setText(network_button_label(self._current_project()) or "检查 / 启动 EasyConnect")
         self.vpn_button.setEnabled(not self.busy and not self.network_checking)
 
-    def _run(self, work, callback, message, *, modal=None, retry=None):
+    def _run(self, work, callback, message, *, modal=None, retry=None, stop_only=False):
         if self.busy or self.closed:
             return
         self.busy = True
+        self._active_collection = stop_only
         token = self.foreground_token = CancellationToken()
         self.status.setText(message)
         self.activity.show()
         self._refresh_enabled()
         if modal:
-            self.progress_dialog = ProgressDialog(self, title=modal, detail=message, fetching=modal == "正在准备审核图片")
-            self.progress_dialog.exit_requested.connect(self.request_exit)
+            self.progress_dialog = ProgressDialog(self, title=modal, detail=message,
+                fetching=stop_only or modal == "正在准备审核图片", stop_only=stop_only)
+            if stop_only:
+                def stop():
+                    token.cancel()
+                    self.progress_dialog.stop_button.setEnabled(False)
+                    self.progress_dialog.stop_button.setText("正在停止…")
+                self.progress_dialog.exit_requested.connect(stop)
+            else:
+                self.progress_dialog.exit_requested.connect(self.request_exit)
             self.progress_dialog.show()
 
         def worker():
@@ -481,6 +496,7 @@ class ReviewWindow(QMainWindow):
         if self.closed:
             return
         cancelled = self.foreground_token is not None and self.foreground_token.cancelled
+        collecting, self._active_collection = self._active_collection, False
         self.foreground_token = None
         self.busy = False
         self.activity.hide()
@@ -502,8 +518,12 @@ class ReviewWindow(QMainWindow):
                 self.active_key = task_key(self.state["project_id"], self.state["business_date"])
                 if self.active_key in self.job_items:
                     self.task_list.setCurrentItem(self.job_items[self.active_key][0])
-            self.status.setText("操作未完成 · 已完成的审核结果仍保存在本机。")
-            self._notice("操作失败", self._friendly_error(detail), detail=detail, retry=retry)
+            if collecting:
+                self.status.setText("采集未完成 · 已下载原图保留")
+                self._notice("数据采集未完成", detail)
+            else:
+                self.status.setText("操作未完成 · 已完成的审核结果仍保存在本机。")
+                self._notice("操作失败", self._friendly_error(detail), detail=detail, retry=retry)
             return
         try:
             callback(result)
@@ -514,6 +534,8 @@ class ReviewWindow(QMainWindow):
 
     @staticmethod
     def _friendly_error(detail):
+        if "越南" in detail:
+            return detail
         if "所选日期" in detail or "图片缓存正在清理" in detail:
             return detail
         if "只有" in detail or "没有可审核" in detail or "没有抓到" in detail:
@@ -528,32 +550,56 @@ class ReviewWindow(QMainWindow):
         self.notice = NoticeDialog(self, title, text, **kwargs)
         self.notice.show()
 
+    def show_update_announcement(self):
+        if self.update_announcement is None:
+            self.update_announcement = NoticeDialog(self, f"更新公告 · v{VERSION}", RELEASE_NOTES)
+        self.update_announcement.show()
+        self.update_announcement.raise_()
+        self.update_announcement.activateWindow()
+
+    def show_startup_announcement(self):
+        key = f"update_announcements/{VERSION}"
+        count = self.preferences.value(key, 0, type=int)
+        if count < 3:
+            self.show_update_announcement()
+            self.preferences.setValue(key, count + 1)
+            self.preferences.sync()
+
     def check_network(self):
         if self.network_checking or self.closed:
             return
         project = self._current_project()
         source = project.source if project else {}
+        custom_check = network_button_label(project)
         url = source.get("base_url") or source.get("history_url")
         if not url:
             self.vpn_status.setText("●  请先选择已配置数据地址的点位")
             return
         self.network_checking = True
+        self.vpn_status.setText("●  正在检查网络")
         self.vpn_button.setEnabled(False)
         def work():
             try:
                 with cancellation_scope(self.network_token):
-                    result = EasyConnectManager().ensure(url)
+                    if custom_check:
+                        result = build_source(project.model_dump()).network_status()
+                    else:
+                        result = EasyConnectManager().ensure(url)
             except WorkCancelled:
                 return
             except Exception:
                 logger.exception("Network check failed")
                 result = {"available": False, "message": "网络检查未完成，请确认 VPN 已连接"}
             if not self.closed:
-                self.signals.network_finished.emit(result)
+                self.signals.network_finished.emit({**result, "project_id": project.id})
         Thread(target=work, daemon=True).start()
 
     def _network_checked(self, result):
         self.network_checking = False
+        project = self._current_project()
+        if result.get("project_id") and (not project or result["project_id"] != project.id):
+            self._refresh_enabled()
+            return
         self.vpn_status.setText("●  " + result["message"])
         color = "#29946A" if result["available"] else "#B1874A"
         self.vpn_status.setStyleSheet(f"color: {color}; font-size: 12px;")
@@ -581,6 +627,40 @@ class ReviewWindow(QMainWindow):
             target=self.preferences.value("last_target", 50, type=int))
         self.selection_dialog.submitted.connect(self.start_downloads)
         self.selection_dialog.show()
+
+    def open_collection(self):
+        if self.busy or self.closed:
+            return
+        self.collection_dialog = CollectionDialog(self, self.projects, self._current_project(), downloads_directory())
+        self.collection_dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        self.collection_dialog.submitted.connect(self._start_collection)
+        self.collection_dialog.show()
+
+    def _start_collection(self, project_id, start, end, quantity, directory):
+        project = self.project_by_id[project_id]
+
+        def collect():
+            self.downloads.ensure_route(project)
+            return collect_originals(project.model_dump(), start, end, quantity, directory)
+
+        self._run(collect, self._collection_finished, f"{project.name} · {start} 至 {end} · 目标 {quantity:,} 张",
+                  modal="正在采集原图", stop_only=True)
+
+    def _collection_finished(self, result):
+        saved, requested = result["saved"], result["requested"]
+        folder = result["directory"]
+        message = f"已保存 {saved:,} / {requested:,} 张原图。"
+        if result["available"] < requested:
+            message += f"\n日期区间内只有 {result['available']:,} 张可确认的原图。"
+        if result["failed"]:
+            message += f"\n{result['failed']:,} 张原图下载或校验失败。"
+        if result["reason"]:
+            message += f"\n{result['reason']}"
+        self.status.setText(f"采集结束 · 已保存 {saved:,} 张原图")
+        self._notice("数据采集结果", message + (f"\n\n保存位置\n{folder}" if folder else ""))
+        if folder:
+            open_folder = button("打开保存位置", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder))))
+            self.notice.layout().addWidget(open_folder)
 
     def start_downloads(self, project_ids, day, target):
         if self.busy:

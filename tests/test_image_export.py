@@ -13,6 +13,38 @@ from app.desktop.image_export import save_original_image
 from app.desktop.widgets import ImageViewer
 
 
+def test_zoom_keeps_the_view_point_after_rotation(qapp):
+    from PySide6.QtCore import QPoint
+    from PySide6.QtGui import QImage
+
+    viewer = ImageViewer()
+    viewer.resize(800, 500)
+    viewer.show()
+    qapp.processEvents()
+    image = QImage(1600, 900, QImage.Format.Format_RGB32)
+    image.fill(0xff506080)
+    viewer.set_image(image)
+    for rotation in range(1, 5):
+        viewer.fit()
+        viewer.rotate()
+        viewer.change_zoom(4)
+        center = viewer.pixmap_item.boundingRect().center()
+        viewer.centerOn(center.x() + 35, center.y() + 55)
+
+        anchor = QPoint(320, 200)
+        point = viewer.mapToScene(anchor)
+        viewer.change_zoom(1.2, anchor=anchor)
+        assert (viewer.mapFromScene(point) - anchor).manhattanLength() <= 2
+
+        center = viewer.viewport().rect().center()
+        point = viewer.mapToScene(center)
+        viewer.change_zoom(1 / 1.2)
+        viewer.set_image(image, reset=False)
+        assert (viewer.mapFromScene(point) - center).manhattanLength() <= 2
+        assert viewer.rotation == rotation % 4
+    viewer.close()
+
+
 def picture():
     image = QImage(640, 360, QImage.Format.Format_RGB32)
     image.fill(QColor('#192A3B'))
@@ -79,7 +111,7 @@ def test_desktop_confirmation_saves_raw_not_display_and_keeps_review_responsive(
     monkeypatch.setattr(db,'DB_PATH',tmp_path/'review.sqlite3')
     monkeypatch.setattr(settings.storage,'data_root',str(tmp_path/'cache'))
     monkeypatch.setattr(QStandardPaths,'writableLocation',lambda _kind:str(tmp_path/'Downloads'))
-    window=ReviewWindow(check_network=False)
+    window=ReviewWindow()
     window.manual_report.setChecked(True)
     window.state={'project_id':window.projects[0].id,'business_date':'2026-11-09','current':{'source_key':'RAW/001','item_id':999}}
     window.viewer.set_image(picture());window.viewer.rotate();window.viewer.change_zoom(2)

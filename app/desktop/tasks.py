@@ -5,7 +5,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 
 
-CATEGORIES = ("镔鑫一期", "镔鑫二期", "芜湖", "瑞丰", "其他项目")
+CATEGORIES = ("镔鑫一期", "镔鑫二期", "芜湖", "瑞丰", "越南", "其他项目")
 STATUSES = (("all", "全部状态"), ("unfinished", "审核未完成"), ("complete", "审核已完成"),
             ("synced", "已同步轻推"), ("ready", "图片已就绪"), ("active", "正在拉取 / 排队"),
             ("paused", "缓存待补齐"), ("cancelled", "已停止"), ("failed", "拉取失败"))

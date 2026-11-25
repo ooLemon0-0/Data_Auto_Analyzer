@@ -1655,7 +1655,18 @@ class QingTuiDocumentSink(DataSink):
         prefer_existing: bool = True,
     ):
 
-        if prefer_existing:
+        if selectors.get("match_document_url"):
+            target = urlparse(document_url)
+            identity = (target.scheme, target.netloc, target.path.rstrip("/"))
+            pages = []
+            for candidate in context.pages:
+                current = urlparse(candidate.url)
+                if (current.scheme, current.netloc, current.path.rstrip("/")) == identity:
+                    pages.append(candidate)
+        else:
+            pages = None
+
+        if prefer_existing and pages is None:
 
             existing = (
                 self._existing_editor_page(
@@ -1668,9 +1679,8 @@ class QingTuiDocumentSink(DataSink):
             if existing is not None:
                 return existing
 
-        pages = self._relevant_pages(
-            context
-        )
+        if pages is None:
+            pages = self._relevant_pages(context)
 
         page = (
             pages[-1]
@@ -2577,6 +2587,9 @@ class QingTuiDocumentSink(DataSink):
                 field = spec["field"]
                 expected_value = expected_row[column_index - 1]
                 actual_value = actual_row[column_index - 1]
+
+                if actual_value == expected_value == "":
+                    continue
 
                 if row_index == 1:
                     matches = actual_value == expected_value

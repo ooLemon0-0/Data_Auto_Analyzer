@@ -42,8 +42,10 @@ class ImageViewer(QGraphicsView):
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
-        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.NoAnchor)
         self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setBackgroundBrush(QColor("#181C27"))
         self._hovered = False
         self.save_button = button('保存原图', self.save_requested.emit, glyph='download', color='#FFFFFF')
@@ -59,10 +61,11 @@ class ImageViewer(QGraphicsView):
         self.viewport().installEventFilter(self)
 
     def set_image(self, image: QImage | None, *, reset=True):
+        center = self._view_center() if not reset and self.pixmap_item is not None else None
         self.image = image
         if reset:
             self.rotation, self.zoom = 0, 1.0
-        self.redraw()
+        self.redraw(center)
         self._update_save_button()
 
     def _update_save_button(self):
@@ -83,42 +86,62 @@ class ImageViewer(QGraphicsView):
                 self._update_save_button()
         return super().eventFilter(watched, event)
 
-    def redraw(self):
+    def _view_center(self):
+        return self.mapToScene(self.viewport().rect().center())
+
+    def redraw(self, center=None):
         self.scene().clear()
         self.pixmap_item = None
         if self.image is not None and not self.image.isNull():
             transformed = self.image.transformed(QTransform().rotate(self.rotation * 90), Qt.TransformationMode.SmoothTransformation)
             self.pixmap_item = self.scene().addPixmap(QPixmap.fromImage(transformed))
             self.scene().setSceneRect(self.pixmap_item.boundingRect())
-            self._fit()
+            self._fit(center)
 
-    def _fit(self):
+    def _fit(self, center=None):
         if self.pixmap_item:
             self.resetTransform()
             self.fitInView(self.pixmap_item, Qt.AspectRatioMode.KeepAspectRatio)
             self.scale(self.zoom, self.zoom)
+            self.centerOn(center if center is not None else self.pixmap_item.boundingRect().center())
             self.zoom_changed.emit(f"{self.transform().m11() * 100:.0f}%")
 
     def fit(self):
         self.zoom = 1.0
         self._fit()
 
-    def change_zoom(self, factor):
-        self.zoom = max(0.25, min(10.0, self.zoom * factor))
-        self._fit()
+    def change_zoom(self, factor, *, anchor=None):
+        if self.pixmap_item is None:
+            return
+        updated_zoom = max(0.25, min(10.0, self.zoom * factor))
+        if updated_zoom == self.zoom:
+            return
+        if anchor is None:
+            anchor = self.viewport().rect().center()
+        scene_point = self.mapToScene(anchor)
+        ratio = updated_zoom / self.zoom
+        self.zoom = updated_zoom
+        self.scale(ratio, ratio)
+        offset = self.mapFromScene(scene_point) - anchor
+        horizontal, vertical = self.horizontalScrollBar(), self.verticalScrollBar()
+        horizontal.setValue(horizontal.value() + offset.x())
+        vertical.setValue(vertical.value() + offset.y())
+        self.zoom_changed.emit(f"{self.transform().m11() * 100:.0f}%")
 
     def rotate(self):
         self.rotation = (self.rotation + 1) % 4
         self.redraw()
 
     def wheelEvent(self, event):
-        if self.image is not None:
-            self.change_zoom(1.2 if event.angleDelta().y() > 0 else 1 / 1.2)
+        steps = event.angleDelta().y() / 120
+        if steps:
+            self.change_zoom(1.2 ** steps, anchor=event.position().toPoint())
         event.accept()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._fit()
+        if self.pixmap_item:
+            self._fit(self._view_center() if self.zoom > 1 else None)
 
 
 class SaveOriginalDialog(QDialog):
@@ -153,7 +176,7 @@ class ProgressDialog(QDialog):
     """Application-modal job progress, fed by real transport/cache events."""
     exit_requested = Signal()
 
-    def __init__(self, parent=None, *, title="正在准备审核图片", detail="", fetching=True):
+    def __init__(self, parent=None, *, title="正在准备审核图片", detail="", fetching=True, stop_only=False):
         super().__init__(parent)
         self.active = True
         self.fetching = fetching
@@ -199,11 +222,14 @@ class ProgressDialog(QDialog):
         timing.addStretch()
         timing.addWidget(self.elapsed)
         layout.addLayout(timing)
-        self.warning = label("已保存结果会保留，可以停止当前操作并退出。" if fetching else "如出现验证窗口，请完成扫码；也可以停止当前操作并退出。")
+        warning = "已下载原图会保留。" if stop_only else (
+            "已保存结果会保留，可以停止当前操作并退出。" if fetching else "如出现验证窗口，请完成扫码；也可以停止当前操作并退出。")
+        self.warning = label(warning)
         self.warning.setWordWrap(True)
         self.warning.setStyleSheet("color: #7D709E; background: #EFECFC; border-radius: 9px; padding: 12px; font-size: 12px;")
         layout.addWidget(self.warning)
-        layout.addWidget(button("停止当前操作并退出", self.exit_requested.emit))
+        self.stop_button = button("停止采集" if stop_only else "停止当前操作并退出", self.exit_requested.emit)
+        layout.addWidget(self.stop_button)
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._tick)
         self.timer.start(1000)

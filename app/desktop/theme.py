@@ -140,6 +140,7 @@ QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
 QToolTip { color: #F5F6FB; background: #303649; border: none; padding: 8px; border-radius: 5px; }
 QCalendarWidget QToolButton { color: #6658E8; background: white; padding: 6px; }
 QCalendarWidget QAbstractItemView { background: white; selection-background-color: #6658E8; selection-color: white; }
+QCalendarWidget QAbstractItemView::item { padding: 0; min-height: 0; }
 QTableWidget { background: #FFFFFF; alternate-background-color: #F8F9FC; border: 1px solid #E5E8F0; border-radius: 10px; selection-background-color: #F0EDFE; selection-color: #403851; outline: 0; }
 QTableWidget::item { padding: 8px; border-bottom: 1px solid #F0F1F6; }
 QHeaderView::section { background: #F5F6FA; border: none; border-bottom: 1px solid #E5E8F0; color: #868C9E; padding: 10px 8px; font-weight: 500; }

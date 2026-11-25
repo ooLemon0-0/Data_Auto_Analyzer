@@ -12,6 +12,7 @@ from app.core.models import SourceItem
 from app.core.progress import report_progress
 from app.core.http import http_get, http_session
 from app.core.cancellation import check_cancelled
+from app.sources.base import NoSourceRecords
 
 
 CHINA = timezone(timedelta(hours=8))
@@ -124,7 +125,7 @@ def fetch_day(source, business_date: date):
         if len(items) != expected:
             raise RuntimeError(f"历史数据拉取不完整：应有 {expected} 条，实际 {len(items)} 条")
         if not items:
-            raise RuntimeError(f"{business_date.isoformat()} 没有可审核记录，请选择其他日期")
+            raise NoSourceRecords(f"{business_date.isoformat()} 没有可审核记录，请选择其他日期")
         return items
 
 

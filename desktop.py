@@ -88,7 +88,7 @@ def main() -> int:
         try:
             splash.set_stage("创建审核界面")
             app.processEvents()
-            app.window = ReviewWindow(check_network=False, defer_restore=True)
+            app.window = ReviewWindow(defer_restore=True)
             def restore():
                 try:
                     report_startup("恢复本地审核任务")
@@ -111,9 +111,11 @@ def main() -> int:
             return
         try:
             set_startup_callback(None)
-            app.window.finish_startup(check_network=not bool(test_report))
+            app.window.finish_startup()
             app.window.show()
             splash.finish()
+            if not test_report:
+                app.window.show_startup_announcement()
             if args.update_smoke_test:
                 def update_capture():
                     from app.desktop.bootstrap import resource_root
